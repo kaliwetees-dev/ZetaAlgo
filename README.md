@@ -4,13 +4,13 @@ An automated intraday trading system for the "EMA 9 × VWAP crossover" setup,
 with an event-driven backtester, walk-forward validation and a live-execution
 layer that provably reproduces the backtest.
 
-**Three strategies are implemented and none has an edge on the deepest data
-available.** The best of them, a maker mean-reversion scalp, returns a profit
-factor of **1.00 over 1,053 trades across 2.2 years** of 15m data -- the full
-depth of OKX's history. It is profitable in bull markets (PF 1.32) and loses
-in quiet and bear markets, and the three cancel. Every positive result below
-came from a window shorter than a year and dissolved when the window was
-extended. See [the 2.2-year test](#maximum-history-22-years-and-the-edge-is-exactly-zero).
+**Three strategies are implemented and none clears statistical significance on
+the deepest data available.** The best of them, a maker mean-reversion scalp,
+returns a profit factor of **1.06 over 2,060 trades across 2.2 years** of 15m
+data -- the full depth of OKX's history -- at t = +1.01. It works in bull
+regimes (PF 1.28), loses in quiet ones (0.87) and is neutral in bear (1.03),
+and more than the whole total comes from a single bull quarter. See
+[the 2.2-year test](#maximum-history-22-years-and-a-small-bull-dependent-edge).
 The EMA9 x VWAP crossover as published:
 On 60 sessions of real 5-minute US equity bars, pooled profit factor is 0.80
 (still 0.93 with costs set to zero). On OKX perpetual futures — including
@@ -838,54 +838,66 @@ of December. On the full year the same parameters return −13.35. The
 regime-dependence flagged as the main caveat throughout this README is not
 hypothetical -- it is the result.
 
-### Maximum history: 2.2 years, and the edge is exactly zero
+### Maximum history: 2.2 years, and a small bull-dependent edge
 
-OKX's 15m candles reach back to **2024-07-04** -- 76,799 bars, 799 days. That
-is the deepest test available, and it covers a genuine bull run (2024Q4, BTC
-+48%) as well as the 2025-26 decline. Four majors, 1,053 trades:
+OKX's 15m candles reach back to **2024-07-04** -- 76,799 bars, 799 days,
+covering a genuine bull run (2024Q4, BTC +48%) as well as the 2025-26
+decline. Six majors, 2,060 trades:
 
 | regime | trades | win% | PF | net $ | t |
 |---|---|---|---|---|---|
-| **BULL** (BTC 20d > +5%) | 353 | 61.2 | **1.32** | **+26.15** | **+2.03** |
-| flat | 430 | 53.0 | 0.80 | −23.62 | −1.77 |
-| BEAR (< −5%) | 234 | 50.9 | 0.89 | −8.58 | −0.71 |
-| **all** | **1,053** | **55.8** | **1.00** | **+1.40** | **+0.06** |
+| **BULL** (BTC 20d > +5%) | 669 | 58.7 | **1.28** | **+48.22** | **+2.34** |
+| flat | 858 | 52.4 | **0.87** | −29.94 | −1.57 |
+| BEAR (< −5%) | 472 | 55.5 | 1.03 | +4.56 | +0.26 |
+| **all** | **2,060** | **55.6** | **1.06** | **+33.91** | **+1.01** |
 
-**Profit factor 1.00 on a thousand trades.** Not "promising but unproven" --
-measurably nothing. The answer to whether it works in bull and bear markets is
-that it works in **bull only** (PF 1.32), loses in quiet markets (0.80) and
-loses in bear (0.89), and the three cancel out.
+**Profit factor 1.06 at t = +1.01.** Marginally positive and not
+statistically distinguishable from zero, even on two thousand trades.
+
+The regime answer is the part that held when the sample grew: **it works in
+bull markets, loses in quiet markets, and is neutral in bear.** That
+ordering was identical on a half-size sample (1.32 / 0.80 / 0.86), unlike the
+one-year result below it.
 
 | year | trades | PF | net $ |
 |---|---|---|---|
-| 2024 (half year, strong bull) | 227 | 1.42 | +21.93 |
-| 2025 | 486 | 0.83 | −26.78 |
-| 2026 | 340 | 1.09 | +6.25 |
+| 2024 (half year, strong bull) | 468 | 1.43 | +50.90 |
+| 2025 | 928 | 0.91 | −26.13 |
+| 2026 | 664 | 1.06 | +9.14 |
 
-**The one-year regime result was noise.** Over 365 days BEAR was the only
-profitable regime (PF 1.14) and BULL lost; over 799 days that reverses exactly
--- BULL is the only profitable regime and BEAR loses. A regime split whose sign
-flips when the sample doubles is not measuring a regime effect. That also
-retires the "it needs volatility, not direction" reading taken from the
-shorter window.
+Six of nine quarters are positive, but 2024Q4 alone contributes +46.82 --
+more than the 2.2-year total. The edge, such as it is, rests on one strong
+bull quarter.
+
+**The one-year regime reading was noise.** Over 365 days BEAR looked like the
+only profitable regime (PF 1.14) while BULL lost; over 799 days that reverses
+and stays reversed as the sample doubles. A regime split whose sign flips with
+sample size is not measuring a regime, which also retires the "needs
+volatility, not direction" conclusion drawn from the shorter window.
 
 **And the volatility-floor lead is dead.** Raising the fee floor, which admits
-only setups offering a bigger reward, does nothing across the whole range:
+only setups offering a larger reward, moves nothing across the whole range:
 
-| `--min-tp-bps` | 8 | 12 | 16 | 20 | 25 | 30 | 40 |
-|---|---|---|---|---|---|---|---|
-| net $ | +1.40 | +1.41 | +1.33 | +1.33 | +0.99 | +1.15 | +1.09 |
+| `--min-tp-bps` | 8 | 16 | 25 | 40 |
+|---|---|---|---|---|
+| net $ | +33.91 | +33.84 | +33.50 | +34.04 |
 
-That was the single modification the shorter sample pointed at, and it moves
-nothing.
+**A measurement error worth recording.** The first version of this test
+hardcoded contract specs and got `min_qty` wrong for XRP, DOGE and BNB --
+their minimums landed above the $50 position size, so every signal on those
+three was silently skipped and the run reported 1,057 trades from what was
+really three instruments. Corrected, the sample doubles to 2,060 and the
+profit factor moves from 1.00 to 1.06. Always read `min_qty` and `lot_size`
+from the exchange's own instrument data (`tools/fetch_okx.py --specs`), never
+by hand.
 
 **Final position.** Four strategies were built and tested here -- EMA9/VWAP
 crossover, CHoCH/BOS/POC retest, and the maker mean-reversion scalp long-only
-and both ways. On the deepest data available none of them has an edge. Every
-positive result in this README came from a window shorter than a year, and
-each one dissolved when the window was extended. The engine, the cost model,
-the fee-per-R diagnostic, the parity check and the universe scan are the
-durable output; the strategies are not.
+and both ways. The best of them returns a profit factor of 1.06 over 2.2
+years at t = +1.01, concentrated in bull regimes and in a single quarter.
+That is not an edge anyone should fund, and it is also not quite nothing. The
+engine, the cost model, the fee-per-R diagnostic, the live/backtest parity
+check and the universe scan are the durable output.
 
 ### The conclusion a $100 account should draw
 
