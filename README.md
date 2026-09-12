@@ -4,8 +4,11 @@ An automated intraday trading system for the "EMA 9 × VWAP crossover" setup,
 with an event-driven backtester, walk-forward validation and a live-execution
 layer that provably reproduces the backtest.
 
-**Three strategies are implemented. Two lose on all data tested; the third
-(a maker mean-reversion scalp) clears costs at 15m but not at 5m.**
+**Three strategies are implemented and none of them survives a full year of
+data.** The maker mean-reversion scalp clears costs at 15m over 120 days and
+across 30 instruments, but extended to 365 days through a bear market the
+same parameters return a profit factor of 0.90. See
+[the regime test](#regime-test-over-a-full-year-the-120-day-result-does-not-survive).
 The EMA9 x VWAP crossover as published:
 On 60 sessions of real 5-minute US equity bars, pooled profit factor is 0.80
 (still 0.93 with costs set to zero). On OKX perpetual futures — including
@@ -790,6 +793,48 @@ class, 86-90% of a correlated universe being positive is consistent with a
 favourable regime rather than a durable edge, and the 1H series over a full
 year contains a single −94 month as a reminder of what the other kind of
 regime does.
+
+### Regime test over a full year: the 120-day result does not survive
+
+Every figure above came from 120 days of 15m data, May to September 2026.
+Extending the same config to **365 days of 15m** across six majors -- a window
+in which BTC fell 32.8% -- reverses the conclusion:
+
+| regime (BTC 20-day trailing) | trades | win% | PF | net $ | t |
+|---|---|---|---|---|---|
+| BULL (> +5%) | 142 | 54.9 | 0.92 | −2.90 | −0.42 |
+| flat | 211 | 54.5 | **0.75** | −14.62 | −1.55 |
+| BEAR (< −5%) | 129 | 53.5 | 1.14 | +4.53 | +0.60 |
+| **all** | **504** | **54.4** | **0.90** | **−13.35** | −0.95 |
+
+**It does not work in bull or bear. It loses in both, and loses most in
+quiet markets.** Month by month, 6 of 13 are positive, and December 2025
+alone (−16.86) exceeds the whole year's loss.
+
+The one thing the regime split does establish is that **bear markets are not
+the weakness** -- BEAR is the only regime above break-even (PF 1.14), because
+a selloff produces the deep dips and sharp bounces mean reversion needs. The
+killer is a *quiet* market (PF 0.75), where dips are too shallow to clear the
+fee floor. That is the opposite of the intuition that a long-only dip-buyer
+dies in downtrends.
+
+The lagging trend filter does earn its keep, but not where expected:
+
+| regime | filter ON | filter OFF | saved |
+|---|---|---|---|
+| BULL | −2.90 | +2.10 | **−5.00** |
+| flat | −14.62 | −28.78 | **+14.16** |
+| BEAR | +4.53 | +3.88 | +0.65 |
+
+It rescues quiet markets by refusing trades, costs money in bull markets, and
+is roughly neutral in bear.
+
+**What this means for the earlier tables.** The 120-day window that produced
++45.5% held-out was the favourable stretch of a bad year: it contained June's
+−20.6% selloff (the best month, +9.02) and the July-August recovery, and none
+of December. On the full year the same parameters return −13.35. The
+regime-dependence flagged as the main caveat throughout this README is not
+hypothetical -- it is the result.
 
 ### The conclusion a $100 account should draw
 
