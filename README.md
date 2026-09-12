@@ -609,6 +609,57 @@ Leverage is a pure multiplier on both sides -- it manufactures no edge:
 | $10 | $1,000 | 10x | $20.00 | +34.30 | 33.3% |
 | $20 | $2,000 | 20x | $40.00 | +68.60 | 56.5% |
 
+### Cross vs isolated: the $5 is not a $5 risk
+
+A common and expensive misreading: in **cross** margin, $5 at 100x is the
+*initial margin requirement*, not a loss cap. The whole balance backs the
+position as it moves against you. The mode that caps a single trade's loss at
+$5 is **isolated** -- and at 100x that cap arrives so early it destroys the
+strategy.
+
+`--margin-mode` models both. $5 x 100x = $500 notional, held-out half:
+
+| instrument | mode | trades | **liquidated** | win% | net $ | max DD |
+|---|---|---|---|---|---|---|
+| ETH | cross | 31 | 0 | 61.3 | **+17.13** | 18.3% |
+| ETH | **isolated** | 41 | **25 (61%)** | 39.0 | **−7.76** | 29.9% |
+| SOL | cross | 27 | 0 | 66.7 | +49.08 | 21.8% |
+| SOL | isolated | 31 | 14 (45%) | 54.8 | +56.66 | 11.1% |
+| BTC | cross | 35 | 0 | 60.0 | −1.28 | 19.4% |
+| BTC | isolated | 39 | 18 (46%) | 48.7 | −1.67 | 16.7% |
+
+In isolated mode at 100x the liquidation price sits about
+`1/leverage - maintenance` = **0.5%** from entry, while the strategy's stop is
+at **2.00%**. Every losing trade is liquidated by noise long before its stop,
+which is why ETH's win rate falls from 61% to 39% and +$17 becomes −$8.
+
+| leverage | margin as % of notional | liquidation distance |
+|---|---|---|
+| 100x | 1.0% | **0.50%** |
+| 50x | 2.0% | 1.50% |
+| **40x** | 2.5% | **2.00%** (= the stop) |
+| 25x | 4.0% | 3.50% |
+| 10x | 10.0% | 9.50% |
+
+So a 2% stop needs **under 40x** to be the thing that closes the trade.
+
+### The 100x setting buys nothing
+
+Position size is the **notional**, not the leverage. Holding notional at $500
+and lowering the leverage setting changes only how close liquidation sits:
+
+| leverage | margin required | liquidation dist | trades | liquidated | net $ |
+|---|---|---|---|---|---|
+| 100x | $5.00 | 0.50% | 41 | 25 | −7.76 |
+| 40x | $12.50 | 2.00% | 32 | 3 | +18.11 |
+| **25x** | **$20.00** | **3.50%** | **31** | **0** | **+17.13** |
+| 10x | $50.00 | 9.50% | 31 | 0 | +17.13 |
+
+25x and 10x produce **identical P&L** to each other, with no liquidations.
+100x produces a worse result for the same position. High leverage does not
+increase size or profit here; it only moves the liquidation price toward you.
+Pick the lowest leverage that permits the notional you want.
+
 ### The thing that actually ends this account: cross margin
 
 The table above is **one $100 account per instrument**. On *cross* margin, one

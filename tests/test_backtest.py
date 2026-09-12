@@ -370,3 +370,79 @@ class TestMarginAccounting(unittest.TestCase):
             bar = bars[trade.exit_index]
             self.assertGreaterEqual(trade.exit_price, bar.low - 1e-9)
             self.assertLessEqual(trade.exit_price, bar.high + 1e-9)
+
+
+class TestIsolatedVersusCrossMargin(unittest.TestCase):
+    """The two modes fail in opposite ways, and the difference is decisive.
+
+    Isolated caps the loss at the position's own margin but puts the
+    liquidation price roughly ``1/leverage - maintenance`` from entry.  Cross
+    puts liquidation far away but backs the position with the whole account,
+    so nothing caps a single trade's loss at the initial margin.
+    """
+
+    BASE = dict(initial_equity=100.0, sizing="fixed_notional",
+                notional_per_trade=500.0, account_mode="margin",
+                leverage=100.0, maintenance_margin_rate=0.005,
+                lot_size=0.0001, commission_bps=0.0, slippage_ticks=0.0)
+
+    def _run(self, mode, **over):
+        bars = generate_synthetic(days=60, seed=101)
+        config = BacktestConfig(**{**self.BASE, "margin_mode": mode, **over})
+        return run_backtest(bars, replace(LOOSE, stop_mode="atr",
+                                          stop_atr_mult=6.0), config)
+
+    def test_isolated_at_high_leverage_liquidates_constantly(self):
+        isolated = self._run("isolated")
+        self.assertGreater(isolated.exit_reasons.get("liquidation", 0), 0)
+
+    def test_isolated_caps_a_single_loss_near_the_position_margin(self):
+        result = self._run("isolated")
+        liquidations = [t for t in result.trades if t.exit_reason == "liquidation"]
+        self.assertTrue(liquidations)
+        for trade in liquidations:
+            # Margin is notional/leverage = $5; the loss cannot greatly exceed it.
+            self.assertLess(abs(trade.net_pnl), 5.0 * 1.5)
+
+    def test_cross_does_not_cap_a_loss_at_the_initial_margin(self):
+        """The whole point: in cross, $5 of initial margin is not a $5 risk.
+
+        Given a stop further away than the initial margin can cover, a cross
+        position simply keeps losing into the account balance, while the same
+        position in isolated mode is closed out at its own margin.
+        """
+        bars = generate_synthetic(days=60, seed=102, annual_vol=0.9)
+        wide = replace(LOOSE, stop_mode="atr", stop_atr_mult=20.0,
+                       exit_on_close_below_ema=False,
+                       exit_on_close_below_vwap=False, target_r=0.0,
+                       breakeven_at_r=0.0, flat_at_session_end=False,
+                       setup_expires_at_session_end=False)
+        losses = {}
+        for mode in ("cross", "isolated"):
+            config = BacktestConfig(**{**self.BASE, "margin_mode": mode})
+            result = run_backtest(bars, wide, config)
+            self.assertTrue(result.trades, mode)
+            losses[mode] = min(t.net_pnl for t in result.trades)
+        # Isolated stops at its own margin ($5); cross keeps going past it.
+        self.assertGreater(losses["isolated"], -5.0 * 1.5)
+        self.assertLess(losses["cross"], losses["isolated"])
+        self.assertLess(losses["cross"], -5.0)
+
+    def test_lower_leverage_moves_liquidation_away_from_entry(self):
+        counts = {
+            lev: self._run("isolated", leverage=lev,
+                           notional_per_trade=500.0).exit_reasons.get("liquidation", 0)
+            for lev in (100.0, 25.0)
+        }
+        self.assertGreater(counts[100.0], counts[25.0])
+
+    def test_same_notional_at_lower_leverage_keeps_the_pnl(self):
+        """Leverage is not position size: the notional is.
+
+        Holding notional fixed and cutting leverage leaves the trading
+        identical while pushing the liquidation price out of reach.
+        """
+        high = self._run("isolated", leverage=100.0)
+        low = self._run("isolated", leverage=10.0)
+        self.assertGreater(len(low.trades), 0)
+        self.assertGreaterEqual(low.final_equity, high.final_equity)

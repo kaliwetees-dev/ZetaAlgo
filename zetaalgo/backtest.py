@@ -295,12 +295,20 @@ class Backtester:
 
     # ------------------------------------------------------------------
     def _check_liquidation(self, index: int, bar: Bar) -> bool:
-        """Force-close when the adverse extreme would breach maintenance margin.
+        """Force-close when the adverse extreme breaches maintenance margin.
 
-        With leverage this can happen before the strategy's own stop is
-        reached, and it is checked first: the exchange does not wait for your
-        stop.  Measured against the bar's worst price, since that is where the
-        exchange's mark would have been.
+        Checked before the strategy's own exits, because the exchange does not
+        wait for your stop, and measured against the bar's worst price.
+
+        The two margin modes fail differently, and the difference decides
+        whether an account can be lost on one trade:
+
+        * **cross** -- the whole balance absorbs the loss, so liquidation is
+          far away but takes everything when it arrives.
+        * **isolated** -- only notional/leverage backs the position, so the
+          loss is capped at that margin, but liquidation sits roughly
+          ``1/leverage - maintenance_rate`` away from entry.  At 100x that is
+          about half a percent, which ordinary noise clears.
         """
         cfg = self.config
         position = self.position
@@ -308,15 +316,25 @@ class Backtester:
             return False
         way = position.direction
         worst = bar.low if way > 0 else bar.high
-        equity_at_worst = self.cash + way * (worst - position.entry_price) * position.qty
+        pnl_at_worst = way * (worst - position.entry_price) * position.qty
         maintenance = position.qty * worst * cfg.maintenance_margin_rate
-        if equity_at_worst > maintenance:
-            return False
-        # Liquidation price: where equity is eaten down to maintenance margin.
-        denominator = position.qty * (1.0 - way * cfg.maintenance_margin_rate)
-        if denominator <= 0:
-            return False
-        price = position.entry_price + way * (maintenance - self.cash) / denominator
+
+        if cfg.margin_mode == "isolated":
+            allocated = position.qty * position.entry_price / cfg.leverage
+            if allocated + pnl_at_worst > maintenance:
+                return False
+            denominator = position.qty * (way - cfg.maintenance_margin_rate)
+            if denominator == 0:
+                return False
+            price = (way * position.entry_price * position.qty - allocated) / denominator
+        else:
+            if self.cash + pnl_at_worst > maintenance:
+                return False
+            denominator = position.qty * (1.0 - way * cfg.maintenance_margin_rate)
+            if denominator <= 0:
+                return False
+            price = position.entry_price + way * (maintenance - self.cash) / denominator
+
         price = max(bar.low, min(bar.high, price))
         return self._close_position(index, bar, price, "liquidation")
 

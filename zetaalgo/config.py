@@ -131,6 +131,14 @@ class BacktestConfig:
     # leverage and marks the position to market, which is how a perpetual
     # actually works -- and is the only mode in which a liquidation exists.
     account_mode: str = "cash"  # cash | margin
+    # How margin is allocated, when account_mode="margin".
+    #   "cross"    - the whole balance backs every position.  Losses are NOT
+    #                capped at the initial margin; the account is the buffer.
+    #   "isolated" - each position gets notional/leverage and nothing more.
+    #                Loss per position is capped at that margin, but the
+    #                liquidation price sits only ~(1/leverage - mmr) away,
+    #                which at high leverage is nearer than any sane stop.
+    margin_mode: str = "cross"  # cross | isolated
     leverage: float = 1.0
     # Fraction of notional that must remain as equity before the exchange
     # closes the position.  OKX tiers start near 0.4-0.5% for small size.
@@ -157,6 +165,8 @@ class BacktestConfig:
             raise ValueError("notional_per_trade must be positive")
         if self.account_mode not in ("cash", "margin"):
             raise ValueError(f"unknown account_mode: {self.account_mode!r}")
+        if self.margin_mode not in ("cross", "isolated"):
+            raise ValueError(f"unknown margin_mode: {self.margin_mode!r}")
         if self.leverage <= 0:
             raise ValueError("leverage must be positive")
         if self.risk_pct <= 0 and self.sizing == "risk":

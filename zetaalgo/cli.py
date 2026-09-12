@@ -252,6 +252,12 @@ def _add_account_args(parser: argparse.ArgumentParser) -> None:
                        help="derivatives accounting: reserve notional/leverage "
                             "instead of spending the notional, and model "
                             "liquidation. Required for any leveraged run.")
+    group.add_argument("--margin-mode", choices=("cross", "isolated"),
+                       default="cross",
+                       help="cross: the whole balance backs each position "
+                            "(loss NOT capped at the initial margin). "
+                            "isolated: loss capped at notional/leverage, but "
+                            "liquidation sits ~(1/leverage - mmr) from entry.")
     group.add_argument("--leverage", type=float, default=1.0)
     group.add_argument("--maintenance-margin-rate", type=float, default=0.005,
                        help="equity/notional floor before the exchange closes "
@@ -321,6 +327,7 @@ def build_backtest_config(args: argparse.Namespace) -> BacktestConfig:
         notional_per_trade=args.notional_per_trade,
         account_mode="margin" if args.margin else "cash",
         leverage=args.leverage,
+        margin_mode=args.margin_mode,
         maintenance_margin_rate=args.maintenance_margin_rate,
         risk_pct=args.risk,
         fixed_qty=args.fixed_qty,
