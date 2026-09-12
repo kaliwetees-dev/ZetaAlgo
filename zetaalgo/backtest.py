@@ -110,12 +110,18 @@ class Backtester:
             if self.position is None and not exited_this_bar and i > self._cooldown_until:
                 plan = strategy.entry_plan(i)
                 if plan is not None and self._session_budget_left(bar.session):
-                    if bar.high >= plan.trigger_price:
-                        fill = max(bar.open, plan.trigger_price) + slip
-                        # A fill can never be outside the bar's own range.
-                        fill = min(fill, bar.high)
+                    long = plan.direction > 0
+                    touched = bar.high >= plan.trigger_price if long else bar.low <= plan.trigger_price
+                    if touched:
+                        if long:
+                            fill = min(max(bar.open, plan.trigger_price) + slip, bar.high)
+                        else:
+                            # Mirror image: a sell-stop fills at the trigger, or
+                            # at the open when the bar gapped below it.
+                            fill = max(min(bar.open, plan.trigger_price) - slip, bar.low)
                         self._open_position(
-                            i, bar, fill, plan.stop_price, size_price=plan.trigger_price
+                            i, bar, fill, plan.stop_price, size_price=plan.trigger_price,
+                            direction=plan.direction,
                         )
                         strategy.consume_setup()
                         if self.position is not None:
@@ -132,13 +138,14 @@ class Backtester:
                 self._update_protective_levels(i)
 
             # --- 5. mark to market ----------------------------------------
-            notional = self.position.qty * bar.close if self.position else 0.0
+            notional = (self.position.direction * self.position.qty * bar.close
+                        if self.position else 0.0)
             self.equity = self.cash + notional
             result.equity_curve.append(
                 EquityPoint(
                     ts=bar.ts,
                     equity=self.equity,
-                    exposure=(notional / self.equity) if self.equity else 0.0,
+                    exposure=(abs(notional) / self.equity) if self.equity else 0.0,
                     session=bar.session,
                 )
             )
@@ -166,10 +173,11 @@ class Backtester:
         fill: float,
         stop: float,
         size_price: Optional[float] = None,
+        direction: int = 1,
     ) -> None:
         cfg = self.config
         scfg = self.strategy_config
-        if stop >= fill:
+        if direction * (fill - stop) <= 0:
             return  # slippage swallowed the risk distance; refuse the trade
         # Size off the price the order was RESTING at, not the price it filled
         # at.  A live system has to commit to a quantity when it submits the
@@ -181,17 +189,19 @@ class Backtester:
         if qty <= 0:
             return
         fee = commission(qty, fill, cfg)
-        cost = qty * fill + fee
-        if cost > self.cash:
-            # Respect available cash (no implicit margin beyond the cap).
-            qty = float(int((self.cash - fee) / fill))
-            if qty <= 0:
-                return
-            fee = commission(qty, fill, cfg)
+        if direction > 0:
             cost = qty * fill + fee
-        self.cash -= cost
-        risk = fill - stop
-        target = fill + scfg.target_r * risk if scfg.target_r > 0 else None
+            if cost > self.cash:
+                # Respect available cash (no implicit margin beyond the cap).
+                qty = float(int((self.cash - fee) / fill))
+                if qty <= 0:
+                    return
+                fee = commission(qty, fill, cfg)
+        # Shorts receive proceeds instead of paying cash; the leverage cap in
+        # position_size is what bounds them.
+        self.cash -= direction * qty * fill + fee
+        risk = direction * (fill - stop)
+        target = fill + direction * scfg.target_r * risk if scfg.target_r > 0 else None
         self.position = Position(
             qty=qty,
             entry_price=fill,
@@ -201,6 +211,7 @@ class Backtester:
             target_price=target,
             initial_stop=stop,
             session=bar.session,
+            direction=direction,
             entry_commission=fee,
         )
         self._trades_this_session[bar.session] = (
@@ -225,38 +236,50 @@ class Backtester:
         # entry bar the pre-fill part of the range is not ours to claim, so
         # unless the pessimistic policy is selected the close is used for both
         # sides rather than contaminated wicks.
+        way = position.direction
         use_full_range = not entry_bar or scfg.entry_bar_stop == "low"
         if use_full_range:
-            position.mfe = max(position.mfe, bar.high - position.entry_price)
-            position.mae = min(position.mae, bar.low - position.entry_price)
+            best, worst = (bar.high, bar.low) if way > 0 else (bar.low, bar.high)
+            position.mfe = max(position.mfe, way * (best - position.entry_price))
+            position.mae = min(position.mae, way * (worst - position.entry_price))
         else:
-            position.mfe = max(position.mfe, bar.close - position.entry_price, 0.0)
-            position.mae = min(position.mae, bar.close - position.entry_price, 0.0)
+            moved = way * (bar.close - position.entry_price)
+            position.mfe = max(position.mfe, moved, 0.0)
+            position.mae = min(position.mae, moved, 0.0)
 
         # -- intrabar: stop first, then target ---------------------------
         # On the entry bar the open precedes the fill, so a gap-through-open
         # exit does not apply there.
         stop_active = not entry_bar or scfg.entry_bar_stop == "low"
-        if not entry_bar and bar.open <= position.stop_price:
+        stop_touched = (bar.low <= position.stop_price if way > 0
+                        else bar.high >= position.stop_price)
+        gapped = (bar.open <= position.stop_price if way > 0
+                  else bar.open >= position.stop_price)
+        if not entry_bar and gapped:
             return self._close_position(index, bar, bar.open, "stop_gap")
-        if stop_active and bar.low <= position.stop_price:
-            fill = max(bar.low, position.stop_price - slip)
+        if stop_active and stop_touched:
+            fill = (max(bar.low, position.stop_price - slip) if way > 0
+                    else min(bar.high, position.stop_price + slip))
             return self._close_position(index, bar, fill, "stop")
-        if entry_bar and scfg.entry_bar_stop == "close" and bar.close <= position.stop_price:
+        if (entry_bar and scfg.entry_bar_stop == "close"
+                and way * (bar.close - position.stop_price) <= 0):
             # The bar finished below the stop: the exit is real regardless of
             # the path taken to get there.
-            return self._close_position(index, bar, bar.close - slip, "stop")
-        # The target sits above the trigger, and the trigger was crossed on the
-        # way up, so the part of the range above it is reachable post-fill.
-        if position.target_price is not None and bar.high >= position.target_price:
-            return self._close_position(index, bar, position.target_price, "target")
+            return self._close_position(index, bar, bar.close - way * slip, "stop")
+        # The target sits beyond the trigger, and the trigger was crossed on the
+        # way there, so that part of the range is reachable post-fill.
+        if position.target_price is not None:
+            reached = (bar.high >= position.target_price if way > 0
+                       else bar.low <= position.target_price)
+            if reached:
+                return self._close_position(index, bar, position.target_price, "target")
 
         # -- close-based exits (shared with the live trader) --------------
-        reason = self.strategy.close_exit_reason(index, position.entry_index)
+        reason = self.strategy.close_exit_reason(index, position.entry_index, way)
         if reason is not None:
-            return self._close_position(index, bar, bar.close - slip, reason)
+            return self._close_position(index, bar, bar.close - way * slip, reason)
         if scfg.flat_at_session_end and last_of_session:
-            return self._close_position(index, bar, bar.close - slip, "session_end")
+            return self._close_position(index, bar, bar.close - way * slip, "session_end")
         return False
 
     def _update_protective_levels(self, index: int) -> None:
@@ -264,13 +287,15 @@ class Backtester:
         position = self.position
         assert position is not None
         scfg = self.strategy_config
+        way = position.direction
+        tighten = max if way > 0 else min  # never loosen the stop
         if scfg.breakeven_at_r > 0 and not position.breakeven_done:
             if position.mfe >= scfg.breakeven_at_r * position.risk_per_share:
-                position.stop_price = max(position.stop_price, position.entry_price)
+                position.stop_price = tighten(position.stop_price, position.entry_price)
                 position.breakeven_done = True
-        trail = self.strategy.trail_stop_level(index)
+        trail = self.strategy.trail_stop_level(index, way)
         if trail is not None:
-            position.stop_price = max(position.stop_price, trail)
+            position.stop_price = tighten(position.stop_price, trail)
 
     # ------------------------------------------------------------------
     def _close_position(self, index: int, bar: Bar, fill: float, reason: str) -> bool:
@@ -278,10 +303,10 @@ class Backtester:
         assert position is not None
         cfg = self.config
         fill = max(0.0, fill)
+        way = position.direction
         fee = commission(position.qty, fill, cfg)
-        proceeds = position.qty * fill - fee
-        self.cash += proceeds
-        gross = (fill - position.entry_price) * position.qty
+        self.cash += way * position.qty * fill - fee
+        gross = way * (fill - position.entry_price) * position.qty
         total_fees = fee + position.entry_commission
         net = gross - total_fees
         risk_per_share = position.risk_per_share
@@ -297,11 +322,12 @@ class Backtester:
                 qty=position.qty,
                 initial_stop=position.initial_stop,
                 target_price=position.target_price,
+                direction=way,
                 exit_reason=reason,
                 gross_pnl=gross,
                 commission=total_fees,
                 net_pnl=net,
-                r_multiple=(fill - position.entry_price) / risk_per_share,
+                r_multiple=way * (fill - position.entry_price) / risk_per_share,
                 bars_held=index - position.entry_index,
                 mfe_r=position.mfe / risk_per_share,
                 mae_r=position.mae / risk_per_share,

@@ -172,3 +172,58 @@ class TestOrderManagement(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShortParity(unittest.TestCase):
+    """Shorts must reproduce the backtest as exactly as longs do."""
+
+    def assert_parity(self, bars, scfg):
+        result = run_backtest(bars, scfg)
+        broker = run_paper_session(bars, scfg)
+        opens = [f for i, f in enumerate(broker.fills) if i % 2 == 0]
+        closes = [f for i, f in enumerate(broker.fills) if i % 2 == 1]
+        self.assertEqual(len(opens), len(result.trades))
+        for i, trade in enumerate(result.trades):
+            self.assertEqual(opens[i].ts, trade.entry_ts)
+            self.assertAlmostEqual(opens[i].price, trade.entry_price, places=6)
+            self.assertAlmostEqual(opens[i].qty, trade.qty, places=6)
+            self.assertAlmostEqual(closes[i].price, trade.exit_price, places=6)
+            self.assertEqual(closes[i].reason, trade.exit_reason)
+        self.assertAlmostEqual(broker.equity(), result.final_equity, places=6)
+
+    def test_short_only_parity(self):
+        bars = generate_synthetic(days=20, seed=41)
+        self.assert_parity(bars, StrategyConfig(trade_longs=False, trade_shorts=True))
+
+    def test_both_directions_parity(self):
+        bars = generate_synthetic(days=20, seed=42)
+        self.assert_parity(bars, StrategyConfig(trade_longs=True, trade_shorts=True))
+
+    def test_short_entry_orders_are_sells_with_a_stop_above(self):
+        bars = generate_synthetic(days=18, seed=43)
+        broker = PaperBroker()
+        trader = LiveTrader(broker, StrategyConfig(trade_longs=False, trade_shorts=True))
+        seen = 0
+        for i, bar in enumerate(bars):
+            last = i + 1 >= len(bars) or bars[i + 1].session != bar.session
+            broker.on_bar(bar)
+            for order in trader.on_bar(bar, last_of_session=last):
+                if order.order_type == "stop":
+                    seen += 1
+                    self.assertEqual(order.side, "sell")
+                    self.assertEqual(order.direction, -1)
+                    self.assertGreater(order.stop_loss, order.price)
+        self.assertGreater(seen, 0)
+
+    def test_a_short_position_is_reported_as_negative_quantity(self):
+        bars = generate_synthetic(days=20, seed=44)
+        broker = PaperBroker()
+        trader = LiveTrader(broker, StrategyConfig(trade_longs=False, trade_shorts=True))
+        saw_short = False
+        for i, bar in enumerate(bars):
+            last = i + 1 >= len(bars) or bars[i + 1].session != bar.session
+            broker.on_bar(bar)
+            trader.on_bar(bar, last_of_session=last)
+            if broker.qty < 0:
+                saw_short = True
+        self.assertTrue(saw_short)

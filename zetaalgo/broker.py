@@ -22,6 +22,7 @@ class Position:
     target_price: Optional[float]
     initial_stop: float
     session: str
+    direction: int = 1  # +1 long, -1 short
     entry_commission: float = 0.0
     breakeven_done: bool = False
     mfe: float = 0.0  # max favourable excursion, in price
@@ -30,7 +31,7 @@ class Position:
     @property
     def risk_per_share(self) -> float:
         """Distance from entry to the *initial* stop: the definition of 1R."""
-        return max(1e-12, self.entry_price - self.initial_stop)
+        return max(1e-12, abs(self.entry_price - self.initial_stop))
 
 
 @dataclass
@@ -46,6 +47,7 @@ class Trade:
     qty: float
     initial_stop: float
     target_price: Optional[float]
+    direction: int
     exit_reason: str
     gross_pnl: float
     commission: float
@@ -60,6 +62,10 @@ class Trade:
     @property
     def is_win(self) -> bool:
         return self.net_pnl > 0
+
+    @property
+    def is_long(self) -> bool:
+        return self.direction > 0
 
     @property
     def return_pct(self) -> float:
@@ -88,12 +94,12 @@ def position_size(
     """
     if entry_price <= 0:
         return 0.0
+    risk_per_share = abs(entry_price - stop_price)
     if config.sizing == "fixed":
         qty = config.fixed_qty
     elif config.sizing == "notional":
         qty = (equity * config.notional_pct) / entry_price
     else:  # risk-based
-        risk_per_share = entry_price - stop_price
         if risk_per_share <= 0:
             return 0.0
         qty = (equity * config.risk_pct) / risk_per_share

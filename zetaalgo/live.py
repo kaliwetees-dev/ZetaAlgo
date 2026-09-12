@@ -53,6 +53,7 @@ class Order:
     # then pay less than the intended R while still risking a full 1R, so the
     # broker resolves this against the actual fill price.
     target_r: Optional[float] = None
+    direction: int = 1  # +1 long, -1 short
     reason: str = ""
     ts: Optional[datetime] = None
 
@@ -171,15 +172,19 @@ class PaperBroker(BrokerAdapter):
             logger.info("cancelled %s: %s", order_id, removed)
 
     def update_stop(self, price: float) -> None:
-        if self.qty > 0 and (self.stop_price is None or price > self.stop_price):
+        """Tighten the stop only: up for a long, down for a short."""
+        if self.qty == 0:
+            return
+        way = 1 if self.qty > 0 else -1
+        if self.stop_price is None or way * (price - self.stop_price) > 0:
             logger.info("stop moved to %.2f", price)
             self.stop_price = price
 
     def position_avg_price(self) -> float:
-        return self.avg_price if self.qty > 0 else 0.0
+        return self.avg_price if self.qty != 0 else 0.0
 
     def update_target(self, price: float) -> None:
-        if self.qty > 0:
+        if self.qty != 0:
             self.target_price = price
 
     # -- simulation ----------------------------------------------------
@@ -188,22 +193,39 @@ class PaperBroker(BrokerAdapter):
         self._last_close = bar.close
         slip = self.config.slippage_ticks * self.tick_size
 
-        if self.qty > 0:
-            if self.stop_price is not None and bar.low <= self.stop_price:
-                gapped = bar.open <= self.stop_price
-                price = bar.open if gapped else self.stop_price - slip
-                self._exit(bar, max(bar.low, price), "stop_gap" if gapped else "stop")
-                return
-            if self.target_price is not None and bar.high >= self.target_price:
-                self._exit(bar, self.target_price, "target")
-                return
+        if self.qty != 0:
+            way = 1 if self.qty > 0 else -1
+            if self.stop_price is not None:
+                touched = (bar.low <= self.stop_price if way > 0
+                           else bar.high >= self.stop_price)
+                if touched:
+                    gapped = (bar.open <= self.stop_price if way > 0
+                              else bar.open >= self.stop_price)
+                    if gapped:
+                        price = bar.open
+                    else:
+                        price = self.stop_price - way * slip
+                    price = (max(bar.low, price) if way > 0 else min(bar.high, price))
+                    self._exit(bar, price, "stop_gap" if gapped else "stop")
+                    return
+            if self.target_price is not None:
+                reached = (bar.high >= self.target_price if way > 0
+                           else bar.low <= self.target_price)
+                if reached:
+                    self._exit(bar, self.target_price, "target")
+                    return
 
         if self.qty == 0:
             for order_id, order in list(self.working.items()):
-                if order.side != "buy" or order.order_type != "stop" or order.price is None:
+                if order.order_type != "stop" or order.price is None:
                     continue
-                if bar.high >= order.price:
-                    fill = min(max(bar.open, order.price) + slip, bar.high)
+                way = order.direction
+                touched = (bar.high >= order.price if way > 0 else bar.low <= order.price)
+                if touched:
+                    if way > 0:
+                        fill = min(max(bar.open, order.price) + slip, bar.high)
+                    else:
+                        fill = max(min(bar.open, order.price) - slip, bar.low)
                     self.working.pop(order_id, None)
                     self._fill(order, fill, ts=bar.ts)
                     self._entry_bar_brackets(bar, slip)
@@ -215,56 +237,70 @@ class PaperBroker(BrokerAdapter):
         policy, while the target is always live because the range above the
         trigger is only reachable after the trigger was crossed.
         """
-        if self.qty <= 0:
+        if self.qty == 0:
             return
+        way = 1 if self.qty > 0 else -1
         if self.stop_price is not None:
-            if self.entry_bar_stop == "low" and bar.low <= self.stop_price:
-                self._exit(bar, max(bar.low, self.stop_price - slip), "stop")
+            touched = (bar.low <= self.stop_price if way > 0
+                       else bar.high >= self.stop_price)
+            if self.entry_bar_stop == "low" and touched:
+                price = (max(bar.low, self.stop_price - slip) if way > 0
+                         else min(bar.high, self.stop_price + slip))
+                self._exit(bar, price, "stop")
                 return
-            if self.entry_bar_stop == "close" and bar.close <= self.stop_price:
-                self._exit(bar, bar.close - slip, "stop")
+            if (self.entry_bar_stop == "close"
+                    and way * (bar.close - self.stop_price) <= 0):
+                self._exit(bar, bar.close - way * slip, "stop")
                 return
-        if self.target_price is not None and bar.high >= self.target_price:
-            self._exit(bar, self.target_price, "target")
+        if self.target_price is not None:
+            reached = (bar.high >= self.target_price if way > 0
+                       else bar.low <= self.target_price)
+            if reached:
+                self._exit(bar, self.target_price, "target")
 
     def _fill(self, order: Order, price: float, ts: Optional[datetime] = None) -> None:
         fee = commission(order.qty, price, self.config)
         stamp = ts or order.ts or datetime.min
-        if order.side == "buy":
-            # Respect available cash, exactly as the backtest engine does, so
-            # a fill above the trigger cannot quietly buy on margin here and
-            # make the paper run diverge from the backtest.
-            if order.qty * price + fee > self.cash:
+        opening = self.qty == 0
+        if opening:
+            way = order.direction
+            # Respect available cash exactly as the backtest engine does, so a
+            # fill beyond the trigger cannot quietly buy on margin here and
+            # make the paper run diverge from the backtest.  A short receives
+            # proceeds rather than paying cash, so only longs are capped.
+            if way > 0 and order.qty * price + fee > self.cash:
                 capped = float(int((self.cash - fee) / price)) if price > 0 else 0.0
                 if capped <= 0:
                     logger.warning("insufficient cash for %s; order dropped", order)
                     return
                 order = replace(order, qty=capped)
                 fee = commission(order.qty, price, self.config)
-            self.cash -= order.qty * price + fee
-            self.qty += order.qty
+            self.cash -= way * order.qty * price + fee
+            self.qty = way * order.qty
             self.avg_price = price
             self.stop_price = order.stop_loss
-            if order.target_r and order.stop_loss is not None and price > order.stop_loss:
-                self.target_price = price + order.target_r * (price - order.stop_loss)
+            risk = way * (price - order.stop_loss) if order.stop_loss is not None else 0.0
+            if order.target_r and risk > 0:
+                self.target_price = price + way * order.target_r * risk
             else:
                 self.target_price = order.take_profit
         else:
-            self.cash += order.qty * price - fee
-            self.qty -= order.qty
-            if self.qty <= 0:
-                self.qty = 0.0
-                self.stop_price = self.target_price = None
+            # Closing: the order side is the opposite of the position.
+            way = 1 if self.qty > 0 else -1
+            self.cash += way * abs(self.qty) * price - fee
+            self.qty = 0.0
+            self.stop_price = self.target_price = None
         self.fills.append(Fill(stamp, order.side, order.qty, price, order.reason))
         logger.info("FILL %s %g @ %.2f (%s)", order.side, order.qty, price, order.reason)
 
     def _exit(self, bar: Bar, price: float, reason: str) -> None:
         self.submit(
             Order(
-                side="sell",
-                qty=self.qty,
+                side="sell" if self.qty > 0 else "buy",
+                qty=abs(self.qty),
                 order_type="market",
                 price=price,
+                direction=1 if self.qty > 0 else -1,
                 reason=reason,
                 ts=bar.ts,
             )
@@ -301,6 +337,7 @@ class LiveTrader:
         # a window-relative index: the rolling window slides, so an index
         # stored at entry stops pointing at the entry bar.
         self.entry_bars_seen: Optional[int] = None
+        self.direction: int = 1
         self.mfe: float = 0.0
         self.breakeven_done: bool = False
 
@@ -320,7 +357,7 @@ class LiveTrader:
         # Rebuild strategy state over the window (see module docstring).
         self._rebuild_state(index)
 
-        if self.broker.position_qty() > 0 and self.entry_index is None:
+        if self.broker.position_qty() != 0 and self.entry_index is None:
             # A resting order filled: reconcile the bracket against the real
             # fill price before anything else.
             self.entry_index = index
@@ -333,9 +370,11 @@ class LiveTrader:
             self._reconcile_bracket()
 
         # --- manage an open position ------------------------------------
-        if self.broker.position_qty() > 0:
+        if self.broker.position_qty() != 0:
             bars_held = self.bars_held()
-            reason = self.strategy.close_exit_reason(index, index - bars_held)
+            reason = self.strategy.close_exit_reason(
+                index, index - bars_held, self.direction
+            )
             if reason is None and self.strategy_config.flat_at_session_end and last_of_session:
                 reason = "session_end"
             if reason is not None:
@@ -357,6 +396,7 @@ class LiveTrader:
                 order = self._build_entry_order(bar, plan_next)
                 if order is not None:
                     self.planned_stop = plan_next.stop_price
+                    self.direction = plan_next.direction
                     self.entry_order_id = self.broker.submit(order)
                     self.working_setup_key = self._setup_key(plan_next)
                     submitted.append(order)
@@ -439,11 +479,11 @@ class LiveTrader:
         self.entry_fill = fill
         self.mfe = 0.0
         self.breakeven_done = False
-        risk = fill - self.planned_stop
+        risk = self.direction * (fill - self.planned_stop)
         if risk <= 0:
             return
         if self.strategy_config.target_r > 0:
-            target = fill + self.strategy_config.target_r * risk
+            target = fill + self.direction * self.strategy_config.target_r * risk
             self.broker.update_target(target)
             logger.info("bracket set from fill %.2f: stop %.2f target %.2f",
                         fill, self.planned_stop, target)
@@ -456,11 +496,13 @@ class LiveTrader:
             # claim, so the close is used unless the pessimistic policy is on.
             # This must match backtest.py or breakeven triggers at different
             # times live than in the backtest.
+            way = self.direction
             if entry_bar and cfg.entry_bar_stop != "low":
-                self.mfe = max(self.mfe, bar.close - self.entry_fill, 0.0)
+                self.mfe = max(self.mfe, way * (bar.close - self.entry_fill), 0.0)
             else:
-                self.mfe = max(self.mfe, bar.high - self.entry_fill)
-            risk = max(1e-12, self.entry_fill - self.planned_stop)
+                best = bar.high if way > 0 else bar.low
+                self.mfe = max(self.mfe, way * (best - self.entry_fill))
+            risk = max(1e-12, abs(self.entry_fill - self.planned_stop))
             if (
                 cfg.breakeven_at_r > 0
                 and not self.breakeven_done
@@ -468,7 +510,7 @@ class LiveTrader:
             ):
                 self.broker.update_stop(self.entry_fill)
                 self.breakeven_done = True
-        trail = self.strategy.trail_stop_level(index)
+        trail = self.strategy.trail_stop_level(index, self.direction)
         if trail is not None:
             self.broker.update_stop(trail)
 
@@ -480,9 +522,10 @@ class LiveTrader:
             return None
         target_r = self.strategy_config.target_r if self.strategy_config.target_r > 0 else None
         return Order(
-            side="buy",
+            side="buy" if plan.direction > 0 else "sell",
             qty=qty,
             order_type="stop",
+            direction=plan.direction,
             price=plan.trigger_price,
             stop_loss=plan.stop_price,
             target_r=target_r,
@@ -493,10 +536,11 @@ class LiveTrader:
     def _flatten(self, bar: Bar, reason: str) -> Order:
         slip = self.config.slippage_ticks * self.strategy_config.tick_size
         order = Order(
-            side="sell",
+            side="sell" if self.direction > 0 else "buy",
             qty=abs(self.broker.position_qty()),
+            direction=self.direction,
             order_type="market",
-            price=bar.close - slip,  # matches the backtest's exit assumption
+            price=bar.close - self.direction * slip,  # matches the backtest
             reason=reason,
             ts=bar.ts,
         )

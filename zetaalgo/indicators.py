@@ -134,6 +134,15 @@ def session_vwap(
     return out
 
 
+def crossed_below(
+    fast_prev: Number, slow_prev: Number, fast_now: Number, slow_now: Number
+) -> bool:
+    """Mirror of :func:`crossed_above`, for the short side of the setup."""
+    if None in (fast_prev, slow_prev, fast_now, slow_now):
+        return False
+    return fast_prev >= slow_prev and fast_now < slow_now
+
+
 def crossed_above(
     fast_prev: Number, slow_prev: Number, fast_now: Number, slow_now: Number
 ) -> bool:

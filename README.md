@@ -4,9 +4,12 @@ An automated intraday trading system for the "EMA 9 × VWAP crossover" setup,
 with an event-driven backtester, walk-forward validation and a live-execution
 layer that provably reproduces the backtest.
 
-**Result up front: on 60 sessions of real 5-minute data across six US
-equities, this setup does not make money** (pooled profit factor 0.80, and
-still 0.93 with costs set to zero). [See the evidence.](#does-it-actually-make-money)
+**Result up front: this setup does not make money on any data tested.**
+On 60 sessions of real 5-minute US equity bars, pooled profit factor is 0.80
+(still 0.93 with costs set to zero). On OKX perpetual futures — including
+XAU-USDT-SWAP — it loses on every instrument, every timeframe and in both
+directions. [Equity evidence](#does-it-actually-make-money) ·
+[OKX perps evidence](#okx-perpetual-futures-including-xau-usdt-swap)
 
 Pure standard library — **no numpy, no pandas, no install step.**
 
@@ -204,6 +207,89 @@ symbol the samples are 5–13 trades, which can support no conclusion at all.
 So the sweep did not find an edge; it found the three symbols that trended
 during this particular 60-day window.
 
+## OKX perpetual futures (including XAU-USDT-SWAP)
+
+Perps change three things, so the code now supports all three: **shorts**
+(`--shorts`, the mirror setup — EMA crossing *below* VWAP, entry on a break of
+the cross candle's low), **24/7 sessions** (no exchange session, so VWAP
+anchors at UTC midnight — the near-universal crypto convention), and **much
+higher fees** (OKX taker is 5 bps/side, 10 bps round trip, versus ~1 bp for
+equities).
+
+```bash
+python3 tools/fetch_okx.py --specs XAU-USDT-SWAP          # tickSz, ctVal
+python3 tools/fetch_okx.py XAU-USDT-SWAP --bar 1H --days 365
+python3 -m zetaalgo run --csv data/xau_usdt_swap_1H.csv \
+        --shorts --tick-size 0.1 --commission-bps 5
+```
+
+**Every instrument, every timeframe, both directions, loses money.**
+Longs *and* shorts, OKX taker fees, risk 1%/trade:
+
+| | 5m (60d) | 15m (120d) | 1H (365d) |
+|---|---|---|---|
+| XAU-USDT-SWAP | PF 0.22 | PF 0.40 | PF 0.49 |
+| BTC-USDT-SWAP | PF 0.35 | PF 0.57 | PF 0.67 |
+| ETH-USDT-SWAP | PF 0.46 | PF 0.68 | PF 0.73 |
+| SOL-USDT-SWAP | PF 0.35 | PF 0.57 | PF 0.89 |
+
+### Why: fees are charged on notional, but risk is the stop distance
+
+This setup's stop is the cross candle's low, which intraday is a *very* small
+percentage of price. Risking a fixed fraction of equity through a tight stop
+demands a large notional — and the round-trip fee lands on that notional, not
+on the risk. The result is a fee bill measured in R:
+
+| | stop distance | fees per trade |
+|---|---|---|
+| XAU 5m | 0.123% of price | **2.42 R** |
+| BTC 5m | 0.172% | 1.71 R |
+| SOL 5m | 0.330% | 0.42 R |
+| XAU 1H | 0.505% | 0.42 R |
+| SOL 1H | 1.569% | 0.09 R |
+
+At 5m on gold, **every trade pays 2.4× the amount being risked, in fees,
+before the market does anything at all.** That is not a strategy that needs
+tuning; it is arithmetic that cannot be won.
+
+**Gold is the worst candidate here, not the best.** XAU-USDT-SWAP has the
+lowest profit factor at every timeframe, precisely because gold's intraday
+range is small relative to its price, which makes the stop tight and the
+fee-to-risk ratio brutal.
+
+### Raising the timeframe fixes the fees — and it still loses
+
+Moving to 1H cuts the fee drag from 2.42R to 0.09R, essentially eliminating
+it. Profit factor improves (0.22 → 0.89) but **never reaches 1.0**. So fees
+were not hiding an edge; once they are out of the way, there is still no edge.
+Neither direction rescues it over a full year at 1H:
+
+| | longs | shorts |
+|---|---|---|
+| XAU-USDT-SWAP | PF 0.43 | PF 0.58 |
+| BTC-USDT-SWAP | PF 0.44 | PF 0.93 |
+| ETH-USDT-SWAP | PF 0.82 | PF 0.65 |
+| SOL-USDT-SWAP | PF 0.90 | PF 0.87 |
+
+A 72-combination sweep at 1H (gap, target, timing windows, exit rules, stop
+mode) found 6 settings above break-even — every one of them with **13 trades
+across a full year and four instruments**. Three trades per instrument per
+year is not a tradeable system; it is a sample too small to mean anything.
+
+### If you intend to trade this anyway
+
+Two things are not modelled, and both make the real result *worse*, not
+better: **funding** (perps charge it every 8h; the engine ignores it) and
+**contract granularity** (OKX sizes in contracts — `ctVal` for XAU is 0.001 oz
+with `lotSz` 1 — so small positions round in ways the engine does not
+simulate). Check `--specs` before sizing, and note that `--tick-size` must
+match the instrument (0.1 for XAU and BTC, 0.01 for ETH and SOL) or the entry
+buffer and stop rounding will be wrong.
+
+The most useful thing this repo can do for you now is test a *different* idea
+cheaply. The engine, the costs, the fee-drag diagnostic and the parity
+guarantee are reusable; only `strategy.py` encodes these particular rules.
+
 ### What this does and does not establish
 
 60 sessions is a small sample, one market regime, one asset class. This is
@@ -243,7 +329,8 @@ avoids. Treat synthetic runs as tests of the machinery, never of the idea.
 | `reporting.py` | text report and CSV exports |
 | `data.py` | CSV loading, session labelling, synthetic generator |
 | `cli.py` | `run`, `paper`, `sweep`, `walkforward`, `generate` |
-| `tools/fetch_yahoo.py` | pull real intraday bars into the CSV format |
+| `tools/fetch_yahoo.py` | pull real equity intraday bars into the CSV format |
+| `tools/fetch_okx.py` | pull OKX perpetual candles and contract specs |
 
 ### Your own data
 

@@ -36,7 +36,10 @@ from typing import List, Optional, Sequence
 from .config import StrategyConfig
 from .data import Bar
 from .indicators import atr as atr_series
-from .indicators import crossed_above, ema, session_vwap
+from .indicators import crossed_above, crossed_below, ema, session_vwap
+
+LONG = 1
+SHORT = -1
 
 
 @dataclass
@@ -47,6 +50,7 @@ class Setup:
     cross_high: float
     cross_low: float
     session: str
+    direction: int = LONG
     confirm_index: Optional[int] = None
 
     @property
@@ -63,6 +67,11 @@ class EntryPlan:
     cross_index: int
     confirm_index: int
     setup_session: str
+    direction: int = LONG
+
+    @property
+    def is_long(self) -> bool:
+        return self.direction == LONG
 
 
 class EmaVwapCrossoverStrategy:
@@ -128,35 +137,46 @@ class EmaVwapCrossoverStrategy:
             return max(gap_from_pct, current_atr * cfg.min_gap_atr)
         return gap_from_pct
 
-    def _gap_ok(self, index: int) -> bool:
+    def _gap_ok(self, index: int, direction: int = LONG) -> bool:
+        """Rule 2: the lines must be separated by more than the threshold.
+
+        The gap is signed by direction, so a short setup needs the EMA that
+        far BELOW the VWAP.
+        """
         ema_value, vwap_value = self.ema[index], self.vwap[index]
         if ema_value is None:
             return False
         needed = self.required_gap(index)
         if needed is None:
             return False
-        return (ema_value - vwap_value) >= needed
+        return direction * (ema_value - vwap_value) >= needed
 
-    def _price_above_both(self, index: int) -> bool:
+    def _price_beyond_both(self, index: int, direction: int = LONG) -> bool:
+        """Rule 3: the candle closes beyond both lines, in the trade's favour."""
         if not self.config.require_close_above_both:
             return True
         bar = self.bars[index]
         ema_value = self.ema[index]
         if ema_value is None:
             return False
-        return bar.close > ema_value and bar.close > self.vwap[index]
+        return (direction * (bar.close - ema_value) > 0
+                and direction * (bar.close - self.vwap[index]) > 0)
 
-    def _rules_satisfied(self, index: int) -> bool:
+    def _rules_satisfied(self, index: int, direction: int = LONG) -> bool:
         """Rules 2 and 3 evaluated on the closed bar ``index``."""
         ema_value = self.ema[index]
-        if ema_value is None or ema_value <= self.vwap[index]:
+        if ema_value is None:
             return False
-        if not self._gap_ok(index):
+        if direction * (ema_value - self.vwap[index]) <= 0:
             return False
-        if not self._price_above_both(index):
+        if not self._gap_ok(index, direction):
             return False
-        if self.config.require_bullish_confirm_candle and not self.bars[index].is_bullish:
+        if not self._price_beyond_both(index, direction):
             return False
+        if self.config.require_bullish_confirm_candle:
+            # "With the trend": a bullish candle for longs, bearish for shorts.
+            if self.bars[index].is_bullish != (direction == LONG):
+                return False
         return True
 
     def _note_rejection(self, reason: str) -> None:
@@ -178,8 +198,9 @@ class EmaVwapCrossoverStrategy:
                 ):
                     self.setup = None
                     self._note_rejection("expired_session_end")
-                elif ema_value is None or ema_value <= self.vwap[index]:
-                    # Rule 2: the EMA failed to stay above the VWAP.
+                elif (ema_value is None
+                      or setup.direction * (ema_value - self.vwap[index]) <= 0):
+                    # Rule 2: the EMA failed to stay on its side of the VWAP.
                     self.setup = None
                     self._note_rejection("ema_fell_back_below_vwap")
                 elif not setup.is_confirmed and index - setup.cross_index > cfg.confirm_window:
@@ -192,25 +213,38 @@ class EmaVwapCrossoverStrategy:
 
         # An unconfirmed setup may confirm on this bar (including the cross bar).
         if self.setup is not None and not self.setup.is_confirmed:
-            if index - self.setup.cross_index <= cfg.confirm_window and self._rules_satisfied(index):
+            if index - self.setup.cross_index <= cfg.confirm_window and self._rules_satisfied(
+                index, self.setup.direction
+            ):
                 self.setup.confirm_index = index
 
         # Detect a fresh cross.  A cross requires the EMA to have been at or
         # below the VWAP on the previous bar, which would already have
         # invalidated any live setup, so the two can never collide.
         if self.setup is None and index > 0:
-            if crossed_above(
-                self.ema[index - 1], self.vwap[index - 1], ema_value, self.vwap[index]
+            previous_ema, previous_vwap = self.ema[index - 1], self.vwap[index - 1]
+            direction = None
+            if cfg.trade_longs and crossed_above(
+                previous_ema, previous_vwap, ema_value, self.vwap[index]
             ):
+                direction = LONG
+            elif cfg.trade_shorts and crossed_below(
+                previous_ema, previous_vwap, ema_value, self.vwap[index]
+            ):
+                direction = SHORT
+            if direction is not None:
                 bar = self.bars[index]
                 self.setup = Setup(
                     cross_index=index,
                     cross_high=bar.high,
                     cross_low=bar.low,
                     session=bar.session,
+                    direction=direction,
                 )
-                self._note_rejection("crosses_detected")
-                if cfg.confirm_window >= 0 and self._rules_satisfied(index):
+                self._note_rejection(
+                    "crosses_detected" if direction == LONG else "crosses_detected_short"
+                )
+                if cfg.confirm_window >= 0 and self._rules_satisfied(index, direction):
                     self.setup.confirm_index = index
 
     # ------------------------------------------------------------------
@@ -239,11 +273,14 @@ class EmaVwapCrossoverStrategy:
             if cfg.setup_expires_at_session_end and self.bars[index].session != setup.session:
                 return None
 
-        trigger = self._round_to_tick(
-            setup.cross_high + cfg.entry_buffer_ticks * cfg.tick_size, up=True
-        )
+        buffer = cfg.entry_buffer_ticks * cfg.tick_size
+        if setup.direction == LONG:
+            trigger = self._round_to_tick(setup.cross_high + buffer, up=True)
+        else:
+            # Rule 4 mirrored: a break of the cross candle's LOW.
+            trigger = self._round_to_tick(setup.cross_low - buffer, up=False)
         stop = self._initial_stop(index, setup, trigger)
-        if stop is None or stop >= trigger:
+        if stop is None or setup.direction * (trigger - stop) <= 0:
             return None  # a non-positive risk distance is not tradeable
         return EntryPlan(
             trigger_price=trigger,
@@ -251,6 +288,7 @@ class EmaVwapCrossoverStrategy:
             cross_index=setup.cross_index,
             confirm_index=setup.confirm_index,
             setup_session=setup.session,
+            direction=setup.direction,
         )
 
     def _initial_stop(self, index: int, setup: Setup, trigger: float) -> Optional[float]:
@@ -258,37 +296,46 @@ class EmaVwapCrossoverStrategy:
         cfg = self.config
         buffer = cfg.stop_buffer_ticks * cfg.tick_size
         prev = index - 1  # last closed bar
+        long = setup.direction == LONG
         if cfg.stop_mode == "cross_low":
-            raw = setup.cross_low - buffer
+            # The far side of the cross candle: its low for a long, high for a short.
+            raw = setup.cross_low - buffer if long else setup.cross_high + buffer
         elif cfg.stop_mode == "vwap":
-            raw = self.vwap[prev] - buffer
+            raw = self.vwap[prev] - buffer if long else self.vwap[prev] + buffer
         else:  # atr
             current_atr = self.atr[prev]
             if current_atr is None:
                 return None
-            raw = trigger - cfg.stop_atr_mult * current_atr
-        return self._round_to_tick(raw, up=False)
+            offset = cfg.stop_atr_mult * current_atr
+            raw = trigger - offset if long else trigger + offset
+        return self._round_to_tick(raw, up=not long)
 
     # ------------------------------------------------------------------
     # Exit helpers used by the engine
     # ------------------------------------------------------------------
-    def trail_stop_level(self, index: int) -> Optional[float]:
+    def trail_stop_level(self, index: int, direction: int = LONG) -> Optional[float]:
         """Trailing stop level implied by the closed bar ``index``."""
         cfg = self.config
         if cfg.trail_mode == "none":
             return None
+        long = direction == LONG
         buffer = cfg.stop_buffer_ticks * cfg.tick_size
         if cfg.trail_mode == "ema":
             ema_value = self.ema[index]
-            return None if ema_value is None else self._round_to_tick(ema_value - buffer, up=False)
-        current_atr = self.atr[index]
-        if current_atr is None:
-            return None
-        return self._round_to_tick(
-            self.bars[index].close - cfg.trail_atr_mult * current_atr, up=False
-        )
+            if ema_value is None:
+                return None
+            raw = ema_value - buffer if long else ema_value + buffer
+        else:
+            current_atr = self.atr[index]
+            if current_atr is None:
+                return None
+            offset = cfg.trail_atr_mult * current_atr
+            raw = self.bars[index].close - offset if long else self.bars[index].close + offset
+        return self._round_to_tick(raw, up=not long)
 
-    def close_exit_reason(self, index: int, entry_index: int) -> Optional[str]:
+    def close_exit_reason(
+        self, index: int, entry_index: int, direction: int = LONG
+    ) -> Optional[str]:
         """Rule-based exit for a bar's close, or ``None`` to stay in.
 
         Shared by the backtest engine and the live trader so the two can never
@@ -299,9 +346,11 @@ class EmaVwapCrossoverStrategy:
         cfg = self.config
         bar = self.bars[index]
         ema_value = self.ema[index]
-        if cfg.exit_on_close_below_ema and ema_value is not None and bar.close < ema_value:
+        # "Below" is relative to the trade: a short exits on a close back ABOVE.
+        if (cfg.exit_on_close_below_ema and ema_value is not None
+                and direction * (bar.close - ema_value) < 0):
             return "close_below_ema"
-        if cfg.exit_on_close_below_vwap and bar.close < self.vwap[index]:
+        if cfg.exit_on_close_below_vwap and direction * (bar.close - self.vwap[index]) < 0:
             return "close_below_vwap"
         if cfg.max_bars_in_trade > 0 and (index - entry_index) >= cfg.max_bars_in_trade:
             return "time_stop"

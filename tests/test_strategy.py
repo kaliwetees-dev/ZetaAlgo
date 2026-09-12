@@ -216,3 +216,55 @@ class TestNoLookahead(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShortSide(unittest.TestCase):
+    """The mirror setup, for instruments that short as easily as they buy."""
+
+    @staticmethod
+    def _falling():
+        return [100.0] * 12 + [100.0 - 0.25 * (i + 1) for i in range(10)]
+
+    def test_a_selloff_after_a_flat_stretch_produces_a_bearish_cross(self):
+        config = StrategyConfig(trade_longs=False, trade_shorts=True, min_gap_atr=0.0)
+        strategy = EmaVwapCrossoverStrategy(config)
+        plans = drive(strategy, make_bars(self._falling()))
+        self.assertTrue(any(p is not None for p in plans))
+        for plan in plans:
+            if plan is not None:
+                self.assertEqual(plan.direction, -1)
+                self.assertFalse(plan.is_long)
+
+    def test_short_trigger_sits_below_the_cross_candle_low(self):
+        config = StrategyConfig(trade_longs=False, trade_shorts=True, min_gap_atr=0.0)
+        strategy = EmaVwapCrossoverStrategy(config)
+        bars = make_bars(self._falling())
+        plan = next(p for p in drive(strategy, bars) if p is not None)
+        self.assertAlmostEqual(plan.trigger_price,
+                               bars[plan.cross_index].low - 0.01, places=6)
+        self.assertAlmostEqual(plan.stop_price,
+                               bars[plan.cross_index].high + 0.01, places=6)
+        self.assertGreater(plan.stop_price, plan.trigger_price)
+
+    def test_a_rally_produces_no_short_setup(self):
+        config = StrategyConfig(trade_longs=False, trade_shorts=True, min_gap_atr=0.0)
+        strategy = EmaVwapCrossoverStrategy(config)
+        self.assertTrue(all(p is None for p in drive(strategy, make_bars(ramp()))))
+
+    def test_a_selloff_produces_no_long_setup(self):
+        strategy = EmaVwapCrossoverStrategy(StrategyConfig(min_gap_atr=0.0))
+        plans = drive(strategy, make_bars(self._falling()))
+        self.assertTrue(all(p is None for p in plans))
+
+    def test_enabling_both_sides_finds_setups_in_both_directions(self):
+        from zetaalgo.data import generate_synthetic
+
+        config = StrategyConfig(trade_longs=True, trade_shorts=True)
+        strategy = EmaVwapCrossoverStrategy(config)
+        plans = [p for p in drive(strategy, generate_synthetic(days=40, seed=55)) if p]
+        self.assertTrue(any(p.direction == 1 for p in plans))
+        self.assertTrue(any(p.direction == -1 for p in plans))
+
+    def test_disabling_both_directions_is_rejected(self):
+        with self.assertRaises(ValueError):
+            StrategyConfig(trade_longs=False, trade_shorts=False)

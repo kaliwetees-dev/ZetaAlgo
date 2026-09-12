@@ -15,6 +15,14 @@ class StrategyConfig:
     ``confirm_window=0`` and ``entry_window=1``.
     """
 
+    # --- Direction ------------------------------------------------------
+    # The published setup is long-only, which is the default.  On instruments
+    # that short as easily as they buy (perpetual futures, CFDs) the mirror
+    # setup -- EMA crossing BELOW VWAP, entry on a break of the cross candle's
+    # low -- is the other half of the same idea.
+    trade_longs: bool = True
+    trade_shorts: bool = False
+
     # --- Indicators -----------------------------------------------------
     ema_period: int = 9
     atr_period: int = 14
@@ -70,6 +78,8 @@ class StrategyConfig:
     cooldown_bars: int = 0
 
     def __post_init__(self) -> None:
+        if not (self.trade_longs or self.trade_shorts):
+            raise ValueError("at least one of trade_longs/trade_shorts must be enabled")
         if self.ema_period <= 0:
             raise ValueError("ema_period must be positive")
         if self.atr_period <= 0:

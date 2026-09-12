@@ -13,7 +13,7 @@ def make_trade(net_pnl: float, r_multiple: float = 1.0, day: int = 1) -> Trade:
     return Trade(
         entry_ts=ts, exit_ts=ts, entry_index=0, exit_index=1,
         entry_price=100.0, exit_price=100.0 + net_pnl / 10.0, qty=10.0,
-        initial_stop=99.0, target_price=102.0, exit_reason="target",
+        initial_stop=99.0, target_price=102.0, direction=1, exit_reason="target",
         gross_pnl=net_pnl, commission=0.0, net_pnl=net_pnl,
         r_multiple=r_multiple, bars_held=2, mfe_r=1.0, mae_r=-0.5,
         session=f"2024-01-{day:02d}", equity_after=100_000.0 + net_pnl,

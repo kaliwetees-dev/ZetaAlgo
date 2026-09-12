@@ -66,6 +66,16 @@ def _add_data_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_strategy_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("strategy rules")
+    group.add_argument(
+        "--shorts",
+        action="store_true",
+        help="also trade the mirror setup (EMA crosses BELOW VWAP, entry on a "
+             "break of the cross candle's low). Requires a shortable "
+             "instrument such as a perpetual future.",
+    )
+    group.add_argument(
+        "--no-longs", action="store_true", help="disable the long side"
+    )
     group.add_argument("--ema", type=int, default=9, help="EMA period (rule 1)")
     group.add_argument(
         "--gap-atr",
@@ -143,6 +153,8 @@ def _add_account_args(parser: argparse.ArgumentParser) -> None:
 
 def build_strategy_config(args: argparse.Namespace) -> StrategyConfig:
     return StrategyConfig(
+        trade_longs=not args.no_longs,
+        trade_shorts=args.shorts,
         ema_period=args.ema,
         min_gap_atr=args.gap_atr,
         min_gap_pct=args.gap_pct,
