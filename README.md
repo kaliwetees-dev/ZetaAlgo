@@ -4,11 +4,13 @@ An automated intraday trading system for the "EMA 9 × VWAP crossover" setup,
 with an event-driven backtester, walk-forward validation and a live-execution
 layer that provably reproduces the backtest.
 
-**Three strategies are implemented and none of them survives a full year of
-data.** The maker mean-reversion scalp clears costs at 15m over 120 days and
-across 30 instruments, but extended to 365 days through a bear market the
-same parameters return a profit factor of 0.90. See
-[the regime test](#regime-test-over-a-full-year-the-120-day-result-does-not-survive).
+**Three strategies are implemented and none has an edge on the deepest data
+available.** The best of them, a maker mean-reversion scalp, returns a profit
+factor of **1.00 over 1,053 trades across 2.2 years** of 15m data -- the full
+depth of OKX's history. It is profitable in bull markets (PF 1.32) and loses
+in quiet and bear markets, and the three cancel. Every positive result below
+came from a window shorter than a year and dissolved when the window was
+extended. See [the 2.2-year test](#maximum-history-22-years-and-the-edge-is-exactly-zero).
 The EMA9 x VWAP crossover as published:
 On 60 sessions of real 5-minute US equity bars, pooled profit factor is 0.80
 (still 0.93 with costs set to zero). On OKX perpetual futures — including
@@ -835,6 +837,55 @@ is roughly neutral in bear.
 of December. On the full year the same parameters return −13.35. The
 regime-dependence flagged as the main caveat throughout this README is not
 hypothetical -- it is the result.
+
+### Maximum history: 2.2 years, and the edge is exactly zero
+
+OKX's 15m candles reach back to **2024-07-04** -- 76,799 bars, 799 days. That
+is the deepest test available, and it covers a genuine bull run (2024Q4, BTC
++48%) as well as the 2025-26 decline. Four majors, 1,053 trades:
+
+| regime | trades | win% | PF | net $ | t |
+|---|---|---|---|---|---|
+| **BULL** (BTC 20d > +5%) | 353 | 61.2 | **1.32** | **+26.15** | **+2.03** |
+| flat | 430 | 53.0 | 0.80 | −23.62 | −1.77 |
+| BEAR (< −5%) | 234 | 50.9 | 0.89 | −8.58 | −0.71 |
+| **all** | **1,053** | **55.8** | **1.00** | **+1.40** | **+0.06** |
+
+**Profit factor 1.00 on a thousand trades.** Not "promising but unproven" --
+measurably nothing. The answer to whether it works in bull and bear markets is
+that it works in **bull only** (PF 1.32), loses in quiet markets (0.80) and
+loses in bear (0.89), and the three cancel out.
+
+| year | trades | PF | net $ |
+|---|---|---|---|
+| 2024 (half year, strong bull) | 227 | 1.42 | +21.93 |
+| 2025 | 486 | 0.83 | −26.78 |
+| 2026 | 340 | 1.09 | +6.25 |
+
+**The one-year regime result was noise.** Over 365 days BEAR was the only
+profitable regime (PF 1.14) and BULL lost; over 799 days that reverses exactly
+-- BULL is the only profitable regime and BEAR loses. A regime split whose sign
+flips when the sample doubles is not measuring a regime effect. That also
+retires the "it needs volatility, not direction" reading taken from the
+shorter window.
+
+**And the volatility-floor lead is dead.** Raising the fee floor, which admits
+only setups offering a bigger reward, does nothing across the whole range:
+
+| `--min-tp-bps` | 8 | 12 | 16 | 20 | 25 | 30 | 40 |
+|---|---|---|---|---|---|---|---|
+| net $ | +1.40 | +1.41 | +1.33 | +1.33 | +0.99 | +1.15 | +1.09 |
+
+That was the single modification the shorter sample pointed at, and it moves
+nothing.
+
+**Final position.** Four strategies were built and tested here -- EMA9/VWAP
+crossover, CHoCH/BOS/POC retest, and the maker mean-reversion scalp long-only
+and both ways. On the deepest data available none of them has an edge. Every
+positive result in this README came from a window shorter than a year, and
+each one dissolved when the window was extended. The engine, the cost model,
+the fee-per-R diagnostic, the parity check and the universe scan are the
+durable output; the strategies are not.
 
 ### The conclusion a $100 account should draw
 
