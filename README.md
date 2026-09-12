@@ -726,6 +726,42 @@ instrument's first-half and second-half profit factor is **−0.11**:
 Last period's laggards beat last period's leaders. Any procedure that chooses
 instruments by past results is therefore worse than owning all of them.
 
+### Shorts: tested with the final config, and they make it worse
+
+The long-only choice was first made from a forward-return measurement at
+`z > 2`, which is a weaker test than it should have been. Re-measured at the
+depth the final config actually quotes (`z > 3`) across 12 instruments, the
+asymmetry is larger, not smaller:
+
+| average forward return, 15m | +6 bars | +12 | +24 |
+|---|---|---|---|
+| **long** after z < −3 | **+33.36** | **+25.39** | **+18.13** bps |
+| **short** after z > +3 | −4.10 | −20.83 | **−63.45** bps |
+
+Shorting an overbought extreme loses, and the loss compounds with holding
+time: dips get bought while rallies keep running, so fading strength fights
+the dominant direction. The strategy's trend-filter veto does not rescue it.
+
+Run through the full 26-instrument portfolio at $50 per position:
+
+| sides | trades | PF | net $ | max DD | t-stat |
+|---|---|---|---|---|---|
+| **long only** | 1,176 | **1.30** | +87.96 | **34.9%** | **+2.38** |
+| long + short | 2,561 | 1.09 | +104.54 | 45.7% | +1.26 |
+| short only | 1,418 | 0.95 | +15.27 | 69.0% | −0.63 |
+
+Held-out half, which settles it:
+
+| sides | trades | PF | net $ | max DD | return / drawdown |
+|---|---|---|---|---|---|
+| **long only** | 633 | **1.40** | **+45.50** | **23.4%** | **1.94** |
+| long + short | 1,311 | 1.16 | +42.31 | 46.9% | 0.90 |
+| short only | 699 | 0.99 | −0.53 | 49.3% | — |
+
+Adding shorts doubles the trade count and the drawdown while returning
+slightly *less* money out of sample. Risk-adjusted it is less than half as
+good. Shorts stay off.
+
 ### The portfolio that follows from that
 
 26 executable instruments (tick under 4 bps -- TRUMP at 5.0, NEAR at 4.2 and
