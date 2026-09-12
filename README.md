@@ -4,11 +4,16 @@ An automated intraday trading system for the "EMA 9 × VWAP crossover" setup,
 with an event-driven backtester, walk-forward validation and a live-execution
 layer that provably reproduces the backtest.
 
+**Result up front: on 60 sessions of real 5-minute data across six US
+equities, this setup does not make money** (pooled profit factor 0.80, and
+still 0.93 with costs set to zero). [See the evidence.](#does-it-actually-make-money)
+
 Pure standard library — **no numpy, no pandas, no install step.**
 
 ```bash
-python3 -m zetaalgo run --synthetic 250            # backtest on generated data
-python3 -m zetaalgo run --csv data/spy_5m.csv      # backtest on your own bars
+python3 tools/fetch_yahoo.py SPY                   # real 5-minute bars
+python3 -m zetaalgo run --csv data/spy_5m.csv      # backtest on real data
+python3 -m zetaalgo run --synthetic 250            # or on generated data
 python3 -m zetaalgo paper --synthetic 30 --compare # dry-run the automation
 python3 -m unittest discover -s tests              # 102 tests
 ```
@@ -151,26 +156,79 @@ folds with positive expectancy_r: 3/5
 Note fold 2: the best in-sample parameters (0.531) went *negative* out of
 sample. That gap is the whole reason this command exists.
 
-## About the numbers in this README
+## Does it actually make money?
 
-**They come from synthetic data and are not evidence of an edge.** The
-generator (`--synthetic`) produces trending and chopping regimes so the engine
-can be exercised end to end, but it is not a market. Point `--csv` at your own
-intraday bars before drawing any conclusion. The report says so too.
+**On 60 sessions of real 5-minute data across six US equities: no.**
 
-What the synthetic runs *do* show is that the mechanics behave sensibly: rule 2
-is doing real work (a 0.05 ATR gap threshold is unprofitable, 0.30 is the best
-of the grid), the edge is thin relative to costs, and the win rate is ~36% with
-a ~2.4 payoff ratio — this is a low-win-rate, high-payoff profile, so it takes
-long losing streaks (7 in a row here) to get paid.
+```bash
+python3 tools/fetch_yahoo.py SPY QQQ AAPL NVDA TSLA AMD   # real 5m bars
+python3 -m zetaalgo run --csv data/spy_5m.csv
+```
 
-Cost sensitivity, same 250 sessions:
+| symbol | trades | win% | profit factor | net | return |
+|---|---|---|---|---|---|
+| SPY | 54 | 27.8 | 0.60 | −1,412 | −1.41% |
+| QQQ | 47 | 27.7 | 0.54 | −2,244 | −2.24% |
+| AAPL | 56 | 41.1 | 1.53 | +3,896 | +3.90% |
+| NVDA | 52 | 25.0 | 0.51 | −4,685 | −4.68% |
+| TSLA | 54 | 38.9 | 1.04 | +420 | +0.42% |
+| AMD | 49 | 24.5 | 0.60 | −6,214 | −6.21% |
 
-| slippage | profit factor | expectancy (R) |
+Four of six lose; pooled profit factor 0.80, net −10,238.
+
+**It is not a cost problem.** Set commission and slippage to zero — which no
+one can actually trade at — and the pooled profit factor is still 0.93:
+
+| costs | profit factor | expectancy (R) |
 |---|---|---|
-| 0 ticks | 1.36 | +0.171 |
-| 1 tick (default) | 1.34 | +0.171 |
-| 3 ticks | 1.24 | +0.126 |
+| realistic (1bp + 1 tick) | 0.80 | −0.014 |
+| zero commission | 0.91 | −0.014 |
+| zero costs (impossible) | 0.93 | +0.010 |
+
+**Nor is it the parameters.** Of 72 combinations swept over gap threshold,
+target, timing windows and exit rules, 5 beat break-even — and all five are
+the same narrow setting. Tested where it was *not* selected, that winner
+falls apart:
+
+| slice | trades | profit factor | t-stat |
+|---|---|---|---|
+| all data (where it won the sweep) | 59 | 1.34 | +0.67 |
+| SPY / QQQ / AAPL | 34 | 0.60 | −1.42 |
+| NVDA / TSLA / AMD | 25 | 1.88 | +1.95 |
+
+The entire profit comes from three high-volatility names, and TSLA alone
+supplies +2,518 of the +3,295 across 8 trades. A t-statistic of +0.67 on 59
+trades is indistinguishable from noise (roughly 2.0 is the usual bar). Per
+symbol the samples are 5–13 trades, which can support no conclusion at all.
+
+So the sweep did not find an edge; it found the three symbols that trended
+during this particular 60-day window.
+
+### What this does and does not establish
+
+60 sessions is a small sample, one market regime, one asset class. This is
+evidence that **the setup as published does not survive contact with recent
+US equity data at 5-minute resolution** — not proof it never works anywhere.
+What would change the answer is more data (years, not weeks), other sessions
+and instruments, and a hypothesis about *why* the edge should exist. If you
+have a longer intraday history, point `--csv` at it; the machinery is built
+to give you a straight answer.
+
+One real signal did survive: the strict, literal reading of the setup —
+confirmation on the cross candle, entry strictly on the next one
+(`--confirm-window 0 --entry-window 1`) — was the *only* region above
+break-even on real data, the opposite of what the synthetic data suggested.
+It trades rarely (59 trades across six symbols in 60 sessions) and, as shown
+above, not significantly. But it is the version worth testing on a longer
+history first.
+
+### The synthetic numbers elsewhere in this README
+
+The `--synthetic` figures quoted above exercise the engine; they are **not
+evidence of an edge**. The generator produces trending and chopping regimes
+by construction, and a breakout strategy flatters itself on trending
+synthetic data — which is exactly the trap the real-data section above
+avoids. Treat synthetic runs as tests of the machinery, never of the idea.
 
 ## Layout
 
@@ -185,6 +243,7 @@ Cost sensitivity, same 250 sessions:
 | `reporting.py` | text report and CSV exports |
 | `data.py` | CSV loading, session labelling, synthetic generator |
 | `cli.py` | `run`, `paper`, `sweep`, `walkforward`, `generate` |
+| `tools/fetch_yahoo.py` | pull real intraday bars into the CSV format |
 
 ### Your own data
 
