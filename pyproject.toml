@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zetaalgo"
+version = "1.0.0"
+description = "Automated EMA9 x VWAP crossover trading system with an event-driven backtester"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+# No runtime dependencies on purpose: the whole engine is standard library,
+# so it installs and runs anywhere without a numpy/pandas build.
+dependencies = []
+
+[project.scripts]
+zetaalgo = "zetaalgo.cli:main"
+
+[tool.setuptools]
+packages = ["zetaalgo"]
