@@ -127,6 +127,10 @@ class BacktestConfig:
     # floors to zero and vanishes.  OKX quotes this as lotSz (0.01 for
     # BTC-USDT-SWAP, 1 for XAU-USDT-SWAP); see tools/fetch_okx.py --specs.
     lot_size: float = 1.0
+    # Exchange minimum order size, in the same underlying units as lot_size
+    # (OKX: minSz x ctVal).  On a small account this, not the strategy, is
+    # what decides whether a signal is tradeable at all.
+    min_qty: float = 0.0
     annualisation_days: int = 252
 
     def __post_init__(self) -> None:

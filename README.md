@@ -516,6 +516,69 @@ traded a stale price the backtest never used -- 81 fills live against 57 in
 the backtest. `--compare` caught it. Any market-making strategy needs the
 cancel/replace path, and it is now there and tested.
 
+## What this looks like on a $100 account
+
+Contract minimums, not the strategy, decide what a small account can trade.
+On OKX one minimum order is worth **$1.02 (SOL) to $7.72 (BTC)** at recent
+prices, while a 1%-risk position at these stop widths needs about $60 of
+notional. So at $100 nothing is rounded away -- `--min-qty` reports **0
+skipped signals** -- and the percentage returns are the same as on a large
+account. Pass the real numbers or the backtest will lie to you:
+
+| instrument | `--tick-size` | `--lot-size` | `--min-qty` |
+|---|---|---|---|
+| SOL-USDT-SWAP | 0.01 | 0.01 | 0.01 |
+| ETH-USDT-SWAP | 0.01 | 0.001 | 0.001 |
+| BTC-USDT-SWAP | 0.1 | 0.0001 | 0.0001 |
+| XAU-USDT-SWAP | 0.1 | 0.001 | 0.001 |
+
+(`lot_size` and `min_qty` are in underlying units: OKX `lotSz` x `ctVal`.)
+
+**15m scalp, $100, risk 1%/trade, 120 days, full period** -- the window the
+parameters were chosen in, so read it as a ceiling, not a forecast:
+
+| instrument | trades | win% | PF | net $ | fees $ | max DD $ | return |
+|---|---|---|---|---|---|---|---|
+| ETH | 57 | 63.2 | 1.70 | **+6.93** | 1.73 | 1.79 | +6.93% |
+| BTC | 59 | 69.5 | 1.50 | +4.27 | 2.62 | 3.57 | +4.27% |
+| SOL | 45 | 62.2 | 1.24 | +2.16 | 1.25 | 2.80 | +2.16% |
+| XAU | 80 | 51.2 | 0.69 | −5.09 | 4.09 | 7.73 | −5.09% |
+
+**Held-out second half only** -- the honest expectation, on data no parameter
+ever saw:
+
+| instrument | trades | win% | PF | net $ | max DD $ | return |
+|---|---|---|---|---|---|---|
+| ETH | 31 | 61.3 | 1.46 | **+2.60** | 1.74 | +2.60% |
+| SOL | 27 | 66.7 | 1.48 | +2.11 | 2.53 | +2.11% |
+| BTC | 35 | 60.0 | 0.85 | −1.04 | 3.44 | −1.04% |
+| XAU | 42 | 61.9 | 1.01 | +0.06 | 2.67 | +0.06% |
+
+So the realistic figure is **two to three dollars over two months** on the
+better instruments -- roughly a dollar a month -- against a drawdown of
+similar size. And funding, which the engine does not model, takes a bite out
+of even that: average hold is 4 hours, so about half of trades cross a funding
+window.
+
+| funding rate | cost over 57 ETH trades | share of the profit |
+|---|---|---|
+| typical 0.01% | ~$0.16 | 2.3% |
+| elevated 0.05% | ~$0.81 | 11.7% |
+| stressed 0.10% | ~$1.62 | 23.4% |
+
+### The conclusion a $100 account should draw
+
+The strategy does not scale badly -- the percentages hold. The problem is that
+a percentage of $100 is not worth the operational risk of running an automated
+system: one mis-set parameter, one unattended outage, one funding spike costs
+more than a month of edge. And the edge itself is unproven (held-out
+t = +0.76).
+
+At $100 the correct use of this is **validation, not profit**: run it small and
+check that your maker fills, fees and slippage actually match the backtest.
+That question is worth a few dollars to answer, and it is the one thing no
+amount of further backtesting can settle.
+
 ### What this does and does not establish
 
 60 sessions is a small sample, one market regime, one asset class. This is

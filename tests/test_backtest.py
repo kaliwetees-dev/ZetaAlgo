@@ -270,3 +270,32 @@ class TestLotSizing(unittest.TestCase):
         coarse = run_backtest(bars, config, BacktestConfig(lot_size=1.0))
         fine = run_backtest(bars, config, BacktestConfig(lot_size=0.001))
         self.assertGreaterEqual(len(fine.trades), len(coarse.trades))
+
+
+class TestMinimumOrderSize(unittest.TestCase):
+    """A signal too small for the exchange minimum is not a trade.
+
+    On a small account this, not the strategy, decides what is tradeable, so
+    the skips are counted rather than silently dropped.
+    """
+
+    def test_signals_below_the_minimum_are_skipped_and_counted(self):
+        bars = generate_synthetic(days=40, seed=95)
+        tiny = BacktestConfig(initial_equity=100.0, lot_size=1.0, min_qty=1000.0)
+        result = run_backtest(bars, LOOSE, tiny)
+        self.assertEqual(result.trades, [])
+        self.assertGreater(result.skipped.get("below_min_size", 0), 0)
+
+    def test_a_reachable_minimum_leaves_trades_intact(self):
+        bars = generate_synthetic(days=40, seed=95)
+        permissive = BacktestConfig(lot_size=0.001, min_qty=0.001)
+        result = run_backtest(bars, LOOSE, permissive)
+        self.assertTrue(result.trades)
+        self.assertEqual(result.skipped.get("below_min_size", 0), 0)
+
+    def test_every_filled_quantity_clears_the_minimum(self):
+        bars = generate_synthetic(days=40, seed=96)
+        config = BacktestConfig(initial_equity=500.0, lot_size=0.01, min_qty=0.05)
+        result = run_backtest(bars, LOOSE, config)
+        for trade in result.trades:
+            self.assertGreaterEqual(trade.qty, 0.05 - 1e-12)

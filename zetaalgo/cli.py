@@ -254,6 +254,9 @@ def _add_account_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--commission-per-share", type=float, default=0.0)
     group.add_argument("--slippage-ticks", type=float, default=1.0)
     group.add_argument("--fractional", action="store_true", help="allow fractional quantity")
+    group.add_argument("--min-qty", type=float, default=0.0,
+                       help="exchange minimum order size in underlying units "
+                            "(OKX minSz x ctVal). Decisive on a small account.")
     group.add_argument("--lot-size", type=float, default=1.0,
                        help="minimum tradeable increment (OKX lotSz: 0.01 for "
                             "BTC/ETH/SOL swaps, 1 for XAU). Whole-unit flooring "
@@ -311,6 +314,7 @@ def build_backtest_config(args: argparse.Namespace) -> BacktestConfig:
         slippage_ticks=args.slippage_ticks,
         allow_fractional_qty=args.fractional,
         lot_size=args.lot_size,
+        min_qty=args.min_qty,
     )
 
 

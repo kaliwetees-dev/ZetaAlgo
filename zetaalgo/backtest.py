@@ -49,6 +49,10 @@ class BacktestResult:
     sessions: int = 0
     signal_counters: Dict[str, int] = field(default_factory=dict)
     exit_reasons: Dict[str, int] = field(default_factory=dict)
+    # Signals that were valid but could not be acted on -- too small for the
+    # exchange minimum, or more than the cash allowed.  Silently dropping
+    # these makes a small account look like a big one.
+    skipped: Dict[str, int] = field(default_factory=dict)
     strategy_config: Optional[StrategyConfig] = None
     backtest_config: Optional[BacktestConfig] = None
     start: Optional[datetime] = None
@@ -104,6 +108,7 @@ class Backtester:
         self.trades: List[Trade] = []
         self._trades_this_session: Dict[str, int] = {}
         self._cooldown_until = -1
+        self._skipped: Dict[str, int] = {}
 
         slip = cfg.slippage_ticks * scfg.tick_size
 
@@ -180,6 +185,7 @@ class Backtester:
             )
 
         result.trades = self.trades
+        result.skipped = dict(self._skipped)
         result.final_equity = self.equity
         result.signal_counters = dict(strategy.rejections)
         reasons: Dict[str, int] = {}
@@ -218,7 +224,9 @@ class Backtester:
         # risk_pct, and the backtest has to show that rather than quietly
         # resize with hindsight.
         qty = position_size(self.equity, size_price or fill, stop, cfg)
-        if qty <= 0:
+        if qty <= 0 or (cfg.min_qty > 0 and qty < cfg.min_qty - 1e-12):
+            # Valid signal, untradeable size: the exchange will not accept it.
+            self._skipped["below_min_size"] = self._skipped.get("below_min_size", 0) + 1
             return
         fee = commission(qty, fill, cfg, maker=maker)
         if direction > 0:
@@ -227,7 +235,9 @@ class Backtester:
                 # Respect available cash (no implicit margin beyond the cap).
                 lot = cfg.lot_size if cfg.lot_size > 0 else 1.0
                 qty = math.floor(round((self.cash - fee) / fill / lot, 9)) * lot
-                if qty <= 0:
+                if qty <= 0 or (cfg.min_qty > 0 and qty < cfg.min_qty - 1e-12):
+                    self._skipped["insufficient_cash"] = (
+                        self._skipped.get("insufficient_cash", 0) + 1)
                     return
                 fee = commission(qty, fill, cfg, maker=maker)
         # Shorts receive proceeds instead of paying cash; the leverage cap in
