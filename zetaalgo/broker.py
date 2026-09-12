@@ -118,5 +118,7 @@ def position_size(
     max_qty = (equity * config.max_notional_pct) / entry_price
     qty = min(qty, max_qty)
     if not config.allow_fractional_qty:
-        qty = float(math.floor(qty))
+        lot = config.lot_size if config.lot_size > 0 else 1.0
+        qty = math.floor(round(qty / lot, 9)) * lot
+        qty = round(qty, 12)  # kill binary-float dust from the division
     return max(0.0, qty)

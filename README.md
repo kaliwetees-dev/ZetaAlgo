@@ -362,6 +362,76 @@ free, there is something in this structure. It is just smaller than the cost
 of trading it -- and the stops here are tighter still, so the fee-per-R
 arithmetic from the section above bites harder, not less.
 
+## Do TP and SL help? (and what a solution would look like)
+
+Take-profit and stop-loss were in every backtest above -- `--target-r` is the
+TP, `--smc-stop`/`--stop-mode` the SL. But they were never the *only* exits,
+and that turned out to matter: on OKX 5m only 60% of EMA/VWAP exits and 54%
+of CHoCH/BOS exits were an actual TP or SL. The rest were rule exits
+(`close_below_ema`, `structure_flip`) and end-of-session flattening.
+
+**Those rule exits were actively harmful.** Switching to TP/SL only:
+
+| | with rule exits | TP/SL only |
+|---|---|---|
+| EMA/VWAP | PF 0.39 | **PF 0.52** |
+| CHoCH/BOS/POC | PF 0.45 | **PF 0.63** |
+
+Better, still losing. The reason is the fee-per-R arithmetic: a trade needs a
+win rate of `(1 + fee_in_R) / (1 + TP_in_R)` just to break even, and at 5m
+with tight stops `fee_in_R` is around 1.0, which demands a ~99% win rate at
+1:1. That is the whole problem in one line.
+
+So the lever is not the TP -- it is the **stop width**, because that is what
+sets fee-per-R. Widening it on EMA/VWAP at 5m:
+
+| stop | fee per R | profit factor |
+|---|---|---|
+| 1x ATR | 0.98 R | 0.39 |
+| 3x ATR | 0.31 R | 0.86 |
+| 6x ATR | 0.15 R | 0.84 |
+
+Fees stop mattering and the strategy converges to **PF ~1.0 -- a coin flip**.
+That is the signature of no edge, not of a cost problem, and it is the clearest
+evidence in this repo that the EMA/VWAP setup has nothing to harvest.
+
+### The one configuration that is not obviously dead
+
+CHoCH/BOS/POC at **1H**, wide ATR stops, TP/SL as the only exits, limit entry
+(maker), correct OKX lot sizes:
+
+| | trades | PF | win% | t-stat |
+|---|---|---|---|---|
+| in-sample (best of 16 cells) | 224 | 1.32 | 47.8 | +2.01 |
+| **held-out second half** | 104 | **1.13** | 43.3 | **+0.59** |
+| XAU / BTC / ETH / SOL | all four | 1.43 / 1.13 / 1.39 / 1.39 | | |
+
+Encouraging: 9 of 16 cells clear break-even in a contiguous plateau (stops of
+3-4x ATR), not one lucky spike, and all four instruments are independently
+positive. Discouraging: the held-out half falls to 1.13 with t = +0.59, which
+is not distinguishable from luck, and +2.01 in-sample is unremarkable after
+searching 16 cells.
+
+Verdict: **plausible small edge, unproven.** Not something to fund. The
+honest next step is more history (this is one year, one regime), not more
+parameter search on the same year.
+
+At the **5m** timeframe originally asked about, no TP/SL geometry clears
+break-even: 0 of 20 on either strategy.
+
+### A bug this experiment exposed: contract granularity
+
+Position size was floored to whole units, which is correct for shares and
+wrong for perps. Risking 1% of 100k through a 4x ATR stop on BTC at ~71,800
+is 0.3887 contracts -- floored to **zero**, and the trade silently disappeared.
+BTC showed 4 trades in a year where it should have had 63.
+
+`--lot-size` now takes the instrument's real increment (OKX `lotSz`: 0.01 for
+BTC/ETH/SOL swaps, 1 for XAU; see `tools/fetch_okx.py --specs`). The earlier
+conclusions in this README were re-checked against the fix and are unchanged,
+because they used tight structural stops where sizing rarely rounded to zero;
+only the wide-stop experiment was affected.
+
 ### What this does and does not establish
 
 60 sessions is a small sample, one market regime, one asset class. This is

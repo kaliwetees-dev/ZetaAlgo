@@ -121,6 +121,12 @@ class BacktestConfig:
     min_commission: float = 0.0
     slippage_ticks: float = 1.0  # applied adversely on entry and exit
     allow_fractional_qty: bool = False
+    # Minimum tradeable increment.  Flooring to whole units is right for
+    # shares but silently DELETES trades on high-priced contracts: risking 1%
+    # of 100k through a 4xATR stop on BTC works out to 0.39 contracts, which
+    # floors to zero and vanishes.  OKX quotes this as lotSz (0.01 for
+    # BTC-USDT-SWAP, 1 for XAU-USDT-SWAP); see tools/fetch_okx.py --specs.
+    lot_size: float = 1.0
     annualisation_days: int = 252
 
     def __post_init__(self) -> None:

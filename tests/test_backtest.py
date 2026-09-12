@@ -236,3 +236,37 @@ class TestNoLookaheadEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLotSizing(unittest.TestCase):
+    """Contract granularity must not silently delete trades.
+
+    Flooring to whole units is right for shares and wrong for high-priced
+    contracts: risking 1% of 100k through a wide stop on a 70k instrument
+    works out to a fraction of a contract, which floors to zero and vanishes
+    from the backtest without any error.
+    """
+
+    def test_a_fractional_contract_is_not_rounded_away(self):
+        from zetaalgo.broker import position_size
+
+        # 0.39 contracts: zero under whole-unit flooring, tradeable at lotSz 0.01.
+        whole = position_size(100_000, 71_841.8, 71_841.8 - 2_572.6, BacktestConfig())
+        lots = position_size(100_000, 71_841.8, 71_841.8 - 2_572.6,
+                             BacktestConfig(lot_size=0.01))
+        self.assertEqual(whole, 0.0)
+        self.assertAlmostEqual(lots, 0.38, places=6)
+
+    def test_quantity_is_always_a_whole_number_of_lots(self):
+        from zetaalgo.broker import position_size
+
+        for lot in (0.01, 0.1, 1.0, 5.0):
+            qty = position_size(100_000, 137.0, 129.0, BacktestConfig(lot_size=lot))
+            self.assertAlmostEqual(qty / lot, round(qty / lot), places=6, msg=lot)
+
+    def test_a_smaller_lot_size_can_only_admit_more_trades(self):
+        bars = generate_synthetic(days=60, seed=91, start_price=70_000.0)
+        config = replace(LOOSE, stop_mode="atr", stop_atr_mult=4.0)
+        coarse = run_backtest(bars, config, BacktestConfig(lot_size=1.0))
+        fine = run_backtest(bars, config, BacktestConfig(lot_size=0.001))
+        self.assertGreaterEqual(len(fine.trades), len(coarse.trades))

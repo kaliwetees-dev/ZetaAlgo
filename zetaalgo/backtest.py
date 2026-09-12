@@ -20,6 +20,7 @@ ambiguous:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Sequence
@@ -222,7 +223,8 @@ class Backtester:
             cost = qty * fill + fee
             if cost > self.cash:
                 # Respect available cash (no implicit margin beyond the cap).
-                qty = float(int((self.cash - fee) / fill))
+                lot = cfg.lot_size if cfg.lot_size > 0 else 1.0
+                qty = math.floor(round((self.cash - fee) / fill / lot, 9)) * lot
                 if qty <= 0:
                     return
                 fee = commission(qty, fill, cfg, maker=maker)

@@ -25,6 +25,7 @@ is not missed between bars.
 from __future__ import annotations
 
 import logging
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
 from datetime import datetime
@@ -294,7 +295,9 @@ class PaperBroker(BrokerAdapter):
             # make the paper run diverge from the backtest.  A short receives
             # proceeds rather than paying cash, so only longs are capped.
             if way > 0 and order.qty * price + fee > self.cash:
-                capped = float(int((self.cash - fee) / price)) if price > 0 else 0.0
+                lot = self.config.lot_size if self.config.lot_size > 0 else 1.0
+                capped = (math.floor(round((self.cash - fee) / price / lot, 9)) * lot
+                          if price > 0 else 0.0)
                 if capped <= 0:
                     logger.warning("insufficient cash for %s; order dropped", order)
                     return
