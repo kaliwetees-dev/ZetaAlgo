@@ -118,7 +118,9 @@ class Backtester:
 
             # --- 1. manage an already-open position with this bar ---------
             if self.position is not None:
-                exited_this_bar = self._manage_position(i, bar, slip, last_of_session)
+                liquidated = self._check_liquidation(i, bar)
+                exited_this_bar = liquidated or self._manage_position(
+                    i, bar, slip, last_of_session)
 
             # --- 2. look for an entry -------------------------------------
             # Skipped on a bar where a position was just closed: the intrabar
@@ -159,8 +161,13 @@ class Backtester:
                         )
                         strategy.consume_setup()
                         if self.position is not None:
-                            # The entry bar is live: it may stop us out at once.
-                            exited_this_bar = self._manage_position(
+                            # The entry bar is live: it may stop us out at
+                            # once -- and on a leveraged position the exchange
+                            # may close it before the stop is ever reached, so
+                            # liquidation is checked here too.
+                            exited_this_bar = self._check_liquidation(
+                                i, bar
+                            ) or self._manage_position(
                                 i, bar, slip, last_of_session, entry_bar=True
                             )
 
@@ -172,9 +179,16 @@ class Backtester:
                 self._update_protective_levels(i)
 
             # --- 5. mark to market ----------------------------------------
-            notional = (self.position.direction * self.position.qty * bar.close
-                        if self.position else 0.0)
-            self.equity = self.cash + notional
+            if self.position is None:
+                notional = 0.0
+                self.equity = self.cash
+            elif cfg.account_mode == "margin":
+                notional = self.position.direction * self.position.qty * bar.close
+                self.equity = self.cash + self.position.direction * (
+                    bar.close - self.position.entry_price) * self.position.qty
+            else:
+                notional = self.position.direction * self.position.qty * bar.close
+                self.equity = self.cash + notional
             result.equity_curve.append(
                 EquityPoint(
                     ts=bar.ts,
@@ -229,10 +243,19 @@ class Backtester:
             self._skipped["below_min_size"] = self._skipped.get("below_min_size", 0) + 1
             return
         fee = commission(qty, fill, cfg, maker=maker)
-        if direction > 0:
-            cost = qty * fill + fee
-            if cost > self.cash:
-                # Respect available cash (no implicit margin beyond the cap).
+        if cfg.account_mode == "margin":
+            # A perpetual RESERVES notional / leverage; it does not spend the
+            # notional.  Only the fee leaves cash now, and P&L settles on
+            # close.  Refuse solely when the margin itself is unaffordable.
+            required = qty * fill / cfg.leverage
+            if required + fee > self.equity:
+                self._skipped["insufficient_margin"] = (
+                    self._skipped.get("insufficient_margin", 0) + 1)
+                return
+            self.cash -= fee
+        else:
+            # Cash (spot-like) accounting: a long pays the full notional.
+            if direction > 0 and qty * fill + fee > self.cash:
                 lot = cfg.lot_size if cfg.lot_size > 0 else 1.0
                 qty = math.floor(round((self.cash - fee) / fill / lot, 9)) * lot
                 if qty <= 0 or (cfg.min_qty > 0 and qty < cfg.min_qty - 1e-12):
@@ -240,9 +263,9 @@ class Backtester:
                         self._skipped.get("insufficient_cash", 0) + 1)
                     return
                 fee = commission(qty, fill, cfg, maker=maker)
-        # Shorts receive proceeds instead of paying cash; the leverage cap in
-        # position_size is what bounds them.
-        self.cash -= direction * qty * fill + fee
+            # Shorts receive proceeds instead of paying cash; the leverage cap
+            # in position_size is what bounds them.
+            self.cash -= direction * qty * fill + fee
         risk = direction * (fill - stop)
         if target_price is not None:
             # An absolute level supplied by the strategy: a better-than-asked
@@ -271,6 +294,32 @@ class Backtester:
         )
 
     # ------------------------------------------------------------------
+    def _check_liquidation(self, index: int, bar: Bar) -> bool:
+        """Force-close when the adverse extreme would breach maintenance margin.
+
+        With leverage this can happen before the strategy's own stop is
+        reached, and it is checked first: the exchange does not wait for your
+        stop.  Measured against the bar's worst price, since that is where the
+        exchange's mark would have been.
+        """
+        cfg = self.config
+        position = self.position
+        if cfg.account_mode != "margin" or position is None:
+            return False
+        way = position.direction
+        worst = bar.low if way > 0 else bar.high
+        equity_at_worst = self.cash + way * (worst - position.entry_price) * position.qty
+        maintenance = position.qty * worst * cfg.maintenance_margin_rate
+        if equity_at_worst > maintenance:
+            return False
+        # Liquidation price: where equity is eaten down to maintenance margin.
+        denominator = position.qty * (1.0 - way * cfg.maintenance_margin_rate)
+        if denominator <= 0:
+            return False
+        price = position.entry_price + way * (maintenance - self.cash) / denominator
+        price = max(bar.low, min(bar.high, price))
+        return self._close_position(index, bar, price, "liquidation")
+
     def _manage_position(
         self,
         index: int,
@@ -384,7 +433,11 @@ class Backtester:
         # A take-profit rests as a limit and therefore earns the maker rate;
         # stops and forced exits cross the spread.
         fee = commission(position.qty, fill, cfg, maker=reason == "target")
-        self.cash += way * position.qty * fill - fee
+        if cfg.account_mode == "margin":
+            # Only the P&L moves cash; the margin is released.
+            self.cash += way * (fill - position.entry_price) * position.qty - fee
+        else:
+            self.cash += way * position.qty * fill - fee
         gross = way * (fill - position.entry_price) * position.qty
         total_fees = fee + position.entry_commission
         net = gross - total_fees

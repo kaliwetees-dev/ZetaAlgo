@@ -241,7 +241,21 @@ def _add_strategy_args(parser: argparse.ArgumentParser) -> None:
 def _add_account_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("account & costs")
     group.add_argument("--equity", type=float, default=100_000.0)
-    group.add_argument("--sizing", choices=("risk", "fixed", "notional"), default="risk")
+    group.add_argument("--sizing",
+                       choices=("risk", "fixed", "notional", "fixed_notional"),
+                       default="risk")
+    group.add_argument("--notional-per-trade", type=float, default=0.0,
+                       help="absolute notional per trade for "
+                            "--sizing fixed_notional (e.g. $5 margin at 100x "
+                            "= 500)")
+    group.add_argument("--margin", action="store_true",
+                       help="derivatives accounting: reserve notional/leverage "
+                            "instead of spending the notional, and model "
+                            "liquidation. Required for any leveraged run.")
+    group.add_argument("--leverage", type=float, default=1.0)
+    group.add_argument("--maintenance-margin-rate", type=float, default=0.005,
+                       help="equity/notional floor before the exchange closes "
+                            "you out (OKX small size is near 0.5%%)")
     group.add_argument("--risk", type=float, default=0.01, help="fraction of equity per trade")
     group.add_argument("--fixed-qty", type=float, default=100.0)
     group.add_argument("--notional-pct", type=float, default=0.25)
@@ -304,6 +318,10 @@ def build_backtest_config(args: argparse.Namespace) -> BacktestConfig:
     return BacktestConfig(
         initial_equity=args.equity,
         sizing=args.sizing,
+        notional_per_trade=args.notional_per_trade,
+        account_mode="margin" if args.margin else "cash",
+        leverage=args.leverage,
+        maintenance_margin_rate=args.maintenance_margin_rate,
         risk_pct=args.risk,
         fixed_qty=args.fixed_qty,
         notional_pct=args.notional_pct,

@@ -105,7 +105,9 @@ def position_size(
     if entry_price <= 0:
         return 0.0
     risk_per_share = abs(entry_price - stop_price)
-    if config.sizing == "fixed":
+    if config.sizing == "fixed_notional":
+        qty = config.notional_per_trade / entry_price
+    elif config.sizing == "fixed":
         qty = config.fixed_qty
     elif config.sizing == "notional":
         qty = (equity * config.notional_pct) / entry_price
@@ -114,8 +116,11 @@ def position_size(
             return 0.0
         qty = (equity * config.risk_pct) / risk_per_share
 
-    # Leverage cap: never deploy more than max_notional_pct of equity.
-    max_qty = (equity * config.max_notional_pct) / entry_price
+    # Leverage cap: never deploy more than max_notional_pct of equity.  In
+    # margin mode the binding limit is the exchange leverage instead.
+    ceiling = (config.max_notional_pct if config.account_mode == "cash"
+               else max(config.max_notional_pct, config.leverage))
+    max_qty = (equity * ceiling) / entry_price
     qty = min(qty, max_qty)
     if not config.allow_fractional_qty:
         lot = config.lot_size if config.lot_size > 0 else 1.0

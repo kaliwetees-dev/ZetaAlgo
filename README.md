@@ -566,6 +566,85 @@ window.
 | elevated 0.05% | ~$0.81 | 11.7% |
 | stressed 0.10% | ~$1.62 | 23.4% |
 
+### Leveraged sizing: $100 with $5 margin per trade at 100x
+
+`--sizing fixed_notional --notional-per-trade 500 --margin --leverage 100`
+models this properly: margin accounting reserves notional/leverage instead of
+spending the notional, and liquidation is checked against the bar's adverse
+extreme (including on the entry bar, where a levered position can be closed
+out before its own stop is reached).
+
+First, what the numbers mean. **$5 of margin at 100x is a $500 position, which
+on a $100 account is 5x account leverage** -- the 100x is only what the
+exchange permits, not what you are running. The consequence is that risk per
+trade is no longer 1%:
+
+| | value |
+|---|---|
+| notional per trade | $500 |
+| account leverage actually used | **5x** |
+| avg stop distance | 2.00% of price |
+| **loss if stopped** | **−$9.99 = 10% of the account** |
+| gain if target hit | +$5.85 = 5.9% of the account |
+| adverse move that liquidates one position | 19.5% |
+
+**Held-out half, one $100 account per instrument** (the honest expectation):
+
+| instrument | trades | liq | win% | PF | net $ | final $ | max DD | return |
+|---|---|---|---|---|---|---|---|---|
+| SOL | 27 | 0 | 66.7 | 2.13 | **+49.08** | 149.08 | 21.8% | +49.1% |
+| ETH | 31 | 0 | 61.3 | 1.28 | +17.13 | 117.13 | 18.3% | +17.1% |
+| BTC | 35 | 0 | 60.0 | 0.97 | −1.28 | 98.72 | 19.4% | −1.3% |
+| XAU | 42 | 0 | 61.9 | 1.00 | +0.06 | 100.06 | 14.4% | +0.1% |
+
+Full period (a ceiling, since the parameters were chosen in it) is +63.2% ETH,
++64.0% SOL, +40.5% BTC, −28.0% XAU.
+
+Leverage is a pure multiplier on both sides -- it manufactures no edge:
+
+| margin/trade | notional | acct leverage | loss per stop | net $ | max DD |
+|---|---|---|---|---|---|
+| $1 | $100 | 1x | $2.00 | +3.41 | 3.9% |
+| **$5** | **$500** | **5x** | **$10.00** | **+17.13** | **18.3%** |
+| $10 | $1,000 | 10x | $20.00 | +34.30 | 33.3% |
+| $20 | $2,000 | 20x | $40.00 | +68.60 | 56.5% |
+
+### The thing that actually ends this account: cross margin
+
+The table above is **one $100 account per instrument**. On *cross* margin, one
+$100 account backs all of them at once, and three concurrent $500 positions is
+$1,500 of notional:
+
+| one $100 cross account, ETH+SOL+BTC | full period | held-out half |
+|---|---|---|
+| final equity | $267.69 (+167.7%) | $164.94 (+64.9%) |
+| lowest equity | $77.60 | $66.04 |
+| max combined drawdown | 31.2% | **43.1%** |
+| peak account leverage | 19.3x | **20.5x** |
+| liquidations in backtest | 0 | 0 |
+| **simultaneous adverse move that would liquidate** | **4.7%** | **3.9%** |
+
+Zero liquidations happened in this window, and that is not reassurance,
+because these three are effectively one bet made three times: 15-minute
+return correlations are **BTC/ETH 0.88, BTC/SOL 0.82, ETH/SOL 0.84**. In the
+same 120 days, the number of starting bars from which all three subsequently
+fell by the liquidating amount:
+
+| window | all three fell ≥3.9% | ≥5% | ≥8% |
+|---|---|---|---|
+| 1 hour | 3 | 3 | 0 |
+| 6 hours | 65 | 37 | 0 |
+| 24 hours | 640 | 380 | 36 |
+
+A 3.9% joint move is a routine crypto event that occurred repeatedly in the
+backtest window. It did not coincide with peak exposure this time. Run this
+configuration long enough and it will, and a cross-margin liquidation takes
+the whole $100, not the one position.
+
+If you want the leverage, the mitigations are structural, not parametric: one
+position at a time, or isolated margin instead of cross, or sizing so total
+notional across open positions stays inside what a 10% joint move can absorb.
+
 ### The conclusion a $100 account should draw
 
 The strategy does not scale badly -- the percentages hold. The problem is that

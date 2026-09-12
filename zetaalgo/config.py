@@ -105,7 +105,12 @@ class BacktestConfig:
     """Account, sizing and cost assumptions for the simulation."""
 
     initial_equity: float = 100_000.0
-    sizing: str = "risk"  # risk | fixed | notional
+    sizing: str = "risk"  # risk | fixed | notional | fixed_notional
+    # Absolute notional per trade, for sizing="fixed_notional".  This is what
+    # "$5 of margin at 100x" means: a constant $500 position regardless of
+    # how wide the stop is -- which also means the RISK per trade is no longer
+    # constant, it is whatever the stop distance happens to be.
+    notional_per_trade: float = 0.0
     risk_pct: float = 0.01  # fraction of equity risked between entry and stop
     fixed_qty: float = 100.0
     notional_pct: float = 0.25  # fraction of equity deployed per trade
@@ -120,6 +125,16 @@ class BacktestConfig:
     commission_per_share: float = 0.0
     min_commission: float = 0.0
     slippage_ticks: float = 1.0  # applied adversely on entry and exit
+    # --- derivatives accounting -----------------------------------------
+    # "cash" spends the full notional out of cash, which is right for spot
+    # and makes leverage impossible.  "margin" only reserves notional /
+    # leverage and marks the position to market, which is how a perpetual
+    # actually works -- and is the only mode in which a liquidation exists.
+    account_mode: str = "cash"  # cash | margin
+    leverage: float = 1.0
+    # Fraction of notional that must remain as equity before the exchange
+    # closes the position.  OKX tiers start near 0.4-0.5% for small size.
+    maintenance_margin_rate: float = 0.005
     allow_fractional_qty: bool = False
     # Minimum tradeable increment.  Flooring to whole units is right for
     # shares but silently DELETES trades on high-priced contracts: risking 1%
@@ -136,8 +151,14 @@ class BacktestConfig:
     def __post_init__(self) -> None:
         if self.initial_equity <= 0:
             raise ValueError("initial_equity must be positive")
-        if self.sizing not in ("risk", "fixed", "notional"):
+        if self.sizing not in ("risk", "fixed", "notional", "fixed_notional"):
             raise ValueError(f"unknown sizing mode: {self.sizing!r}")
+        if self.sizing == "fixed_notional" and self.notional_per_trade <= 0:
+            raise ValueError("notional_per_trade must be positive")
+        if self.account_mode not in ("cash", "margin"):
+            raise ValueError(f"unknown account_mode: {self.account_mode!r}")
+        if self.leverage <= 0:
+            raise ValueError("leverage must be positive")
         if self.risk_pct <= 0 and self.sizing == "risk":
             raise ValueError("risk_pct must be positive when sizing='risk'")
         if self.slippage_ticks < 0:

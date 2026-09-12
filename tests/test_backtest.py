@@ -299,3 +299,74 @@ class TestMinimumOrderSize(unittest.TestCase):
         result = run_backtest(bars, LOOSE, config)
         for trade in result.trades:
             self.assertGreaterEqual(trade.qty, 0.05 - 1e-12)
+
+
+class TestMarginAccounting(unittest.TestCase):
+    """Leverage is impossible under cash accounting, and so is liquidation."""
+
+    def test_cash_mode_holds_notional_near_the_account_size(self):
+        """Cash accounting cannot lever: the notional stays about one account.
+
+        It can overshoot slightly, because size is committed at the resting
+        order's price and a stop order fills past it -- the same deliberate
+        realism documented in _open_position.
+        """
+        bars = generate_synthetic(days=30, seed=97, start_price=1_000.0)
+        config = BacktestConfig(initial_equity=100.0, sizing="fixed_notional",
+                                notional_per_trade=500.0, lot_size=0.001)
+        result = run_backtest(bars, LOOSE, config)
+        self.assertTrue(result.trades)
+        for trade in result.trades:
+            self.assertLess(trade.entry_price * trade.qty, 120.0)
+
+    def test_margin_mode_permits_notional_beyond_the_account(self):
+        bars = generate_synthetic(days=30, seed=97, start_price=1_000.0)
+        config = BacktestConfig(initial_equity=100.0, sizing="fixed_notional",
+                                notional_per_trade=500.0, account_mode="margin",
+                                leverage=100.0, lot_size=0.001)
+        result = run_backtest(bars, LOOSE, config)
+        self.assertTrue(result.trades)
+        notionals = [t.entry_price * t.qty for t in result.trades]
+        self.assertGreater(max(notionals), 400.0)
+
+    def test_margin_equity_reconciles_with_realised_pnl(self):
+        bars = generate_synthetic(days=40, seed=98)
+        config = BacktestConfig(account_mode="margin", leverage=10.0)
+        result = run_backtest(bars, LOOSE, config)
+        realised = sum(t.net_pnl for t in result.trades)
+        self.assertAlmostEqual(result.initial_equity + realised,
+                               result.final_equity, places=6)
+
+    def test_requested_notional_is_capped_at_the_exchange_leverage(self):
+        """Asking for more than leverage allows sizes down, it does not lever up."""
+        bars = generate_synthetic(days=30, seed=99)
+        config = BacktestConfig(initial_equity=100.0, sizing="fixed_notional",
+                                notional_per_trade=50_000.0, account_mode="margin",
+                                leverage=3.0, lot_size=0.001)
+        result = run_backtest(bars, LOOSE, config)
+        self.assertTrue(result.trades)
+        for trade in result.trades:
+            # equity x leverage, plus the resting-price overshoot.
+            self.assertLess(trade.entry_price * trade.qty, 100.0 * 3.0 * 1.25)
+
+    # 100x notional against the account puts the liquidation price nearer than
+    # the strategy's own stop, so the exchange closes the trade first.
+    LEVERED = BacktestConfig(initial_equity=100.0, sizing="fixed_notional",
+                             notional_per_trade=10_000.0, account_mode="margin",
+                             leverage=100.0, lot_size=0.0001,
+                             commission_bps=0.0, slippage_ticks=0.0)
+
+    def test_liquidation_happens_before_a_distant_stop(self):
+        bars = generate_synthetic(days=60, seed=100, annual_vol=0.9)
+        result = run_backtest(bars, LOOSE, self.LEVERED)
+        self.assertIn("liquidation", result.exit_reasons)
+
+    def test_a_liquidation_fill_stays_inside_the_bar(self):
+        bars = generate_synthetic(days=60, seed=100, annual_vol=0.9)
+        result = run_backtest(bars, LOOSE, self.LEVERED)
+        liquidations = [t for t in result.trades if t.exit_reason == "liquidation"]
+        self.assertTrue(liquidations)
+        for trade in liquidations:
+            bar = bars[trade.exit_index]
+            self.assertGreaterEqual(trade.exit_price, bar.low - 1e-9)
+            self.assertLessEqual(trade.exit_price, bar.high + 1e-9)
