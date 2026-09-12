@@ -1,0 +1,302 @@
+[
+ {
+  "instId": "ETH-USDT-SWAP",
+  "tickSz": 0.01,
+  "lotSz": 0.01,
+  "minSz": 0.01,
+  "ctVal": 0.1,
+  "usd24h": 6569318976.846341,
+  "last": 2541.11,
+  "tick_bps": 0.039352881221198614
+ },
+ {
+  "instId": "BTC-USDT-SWAP",
+  "tickSz": 0.1,
+  "lotSz": 0.01,
+  "minSz": 0.01,
+  "ctVal": 0.01,
+  "usd24h": 3763080062.98153,
+  "last": 77356.9,
+  "tick_bps": 0.012927095061978958
+ },
+ {
+  "instId": "ZEC-USDT-SWAP",
+  "tickSz": 0.01,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 0.01,
+  "usd24h": 1031393909.0647,
+  "last": 1150.01,
+  "tick_bps": 0.08695576560203824
+ },
+ {
+  "instId": "SOL-USDT-SWAP",
+  "tickSz": 0.01,
+  "lotSz": 0.01,
+  "minSz": 0.01,
+  "ctVal": 1.0,
+  "usd24h": 843338796.0108,
+  "last": 101.94,
+  "tick_bps": 0.9809691975671965
+ },
+ {
+  "instId": "SNDK-USDT-SWAP",
+  "tickSz": 0.01,
+  "lotSz": 0.001,
+  "minSz": 0.001,
+  "ctVal": 1.0,
+  "usd24h": 336455964.29136,
+  "last": 1632.36,
+  "tick_bps": 0.061260996348844625
+ },
+ {
+  "instId": "XRP-USDT-SWAP",
+  "tickSz": 0.0001,
+  "lotSz": 0.01,
+  "minSz": 0.01,
+  "ctVal": 100.0,
+  "usd24h": 278762167.7155,
+  "last": 1.3685,
+  "tick_bps": 0.7307270734380709
+ },
+ {
+  "instId": "HYPE-USDT-SWAP",
+  "tickSz": 0.001,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 0.1,
+  "usd24h": 210547748.1112,
+  "last": 80.342,
+  "tick_bps": 0.12446789972865997
+ },
+ {
+  "instId": "DOGE-USDT-SWAP",
+  "tickSz": 1e-05,
+  "lotSz": 0.01,
+  "minSz": 0.01,
+  "ctVal": 1000.0,
+  "usd24h": 192238684.0913,
+  "last": 0.08507,
+  "tick_bps": 1.1755025273304338
+ },
+ {
+  "instId": "LAB-USDT-SWAP",
+  "tickSz": 1e-05,
+  "lotSz": 0.1,
+  "minSz": 0.1,
+  "ctVal": 10.0,
+  "usd24h": 183519472.2202,
+  "last": 0.07309,
+  "tick_bps": 1.3681762210972774
+ },
+ {
+  "instId": "UNI-USDT-SWAP",
+  "tickSz": 0.001,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 1.0,
+  "usd24h": 101784995.508,
+  "last": 6.397,
+  "tick_bps": 1.5632327653587619
+ },
+ {
+  "instId": "XAU-USDT-SWAP",
+  "tickSz": 0.1,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 0.001,
+  "usd24h": 101752303.7154,
+  "last": 4357.7,
+  "tick_bps": 0.2294788535236478
+ },
+ {
+  "instId": "PUMP-USDT-SWAP",
+  "tickSz": 1e-06,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 1000.0,
+  "usd24h": 89503119.927,
+  "last": 0.003627,
+  "tick_bps": 2.7570995312930795
+ },
+ {
+  "instId": "PEPE-USDT-SWAP",
+  "tickSz": 1e-09,
+  "lotSz": 0.1,
+  "minSz": 0.1,
+  "ctVal": 10000000.0,
+  "usd24h": 89105027.832,
+  "last": 3.384e-06,
+  "tick_bps": 2.955082742316785
+ },
+ {
+  "instId": "PONS-USDT-SWAP",
+  "tickSz": 0.0001,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 10.0,
+  "usd24h": 84850375.44,
+  "last": 0.636,
+  "tick_bps": 1.572327044025157
+ },
+ {
+  "instId": "TRUMP-USDT-SWAP",
+  "tickSz": 0.001,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 0.1,
+  "usd24h": 83734280.11590001,
+  "last": 1.999,
+  "tick_bps": 5.002501250625312
+ },
+ {
+  "instId": "RAY-USDT-SWAP",
+  "tickSz": 0.0001,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 1.0,
+  "usd24h": 79875256.68,
+  "last": 1.5696,
+  "tick_bps": 0.6371049949031601
+ },
+ {
+  "instId": "NEAR-USDT-SWAP",
+  "tickSz": 0.001,
+  "lotSz": 0.1,
+  "minSz": 0.1,
+  "ctVal": 10.0,
+  "usd24h": 74501513.933,
+  "last": 2.387,
+  "tick_bps": 4.189359028068705
+ },
+ {
+  "instId": "USELESS-USDT-SWAP",
+  "tickSz": 1e-05,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 10.0,
+  "usd24h": 71636062.59,
+  "last": 0.23775,
+  "tick_bps": 0.42060988433228186
+ },
+ {
+  "instId": "CL-USDT-SWAP",
+  "tickSz": 0.01,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 0.1,
+  "usd24h": 65739876.836,
+  "last": 95.51,
+  "tick_bps": 1.0470107842110772
+ },
+ {
+  "instId": "SUI-USDT-SWAP",
+  "tickSz": 0.0001,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 1.0,
+  "usd24h": 59500166.489999995,
+  "last": 0.7263,
+  "tick_bps": 1.3768415255404105
+ },
+ {
+  "instId": "BEAT-USDT-SWAP",
+  "tickSz": 0.0001,
+  "lotSz": 0.1,
+  "minSz": 0.1,
+  "ctVal": 10.0,
+  "usd24h": 56547968.3237,
+  "last": 0.0889,
+  "tick_bps": 11.248593925759279
+ },
+ {
+  "instId": "SOXL-USDT-SWAP",
+  "tickSz": 0.01,
+  "lotSz": 0.01,
+  "minSz": 0.01,
+  "ctVal": 1.0,
+  "usd24h": 52663630.647599995,
+  "last": 122.27,
+  "tick_bps": 0.8178621084485157
+ },
+ {
+  "instId": "BNB-USDT-SWAP",
+  "tickSz": 0.1,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 0.01,
+  "usd24h": 52488759.281,
+  "last": 735.7,
+  "tick_bps": 1.3592496941688188
+ },
+ {
+  "instId": "SPCX-USDT-SWAP",
+  "tickSz": 0.01,
+  "lotSz": 0.01,
+  "minSz": 0.01,
+  "ctVal": 1.0,
+  "usd24h": 48936079.16060001,
+  "last": 150.11,
+  "tick_bps": 0.6661781360335752
+ },
+ {
+  "instId": "WLD-USDT-SWAP",
+  "tickSz": 0.0001,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 1.0,
+  "usd24h": 46649963.273,
+  "last": 0.401,
+  "tick_bps": 2.4937655860349124
+ },
+ {
+  "instId": "ARB-USDT-SWAP",
+  "tickSz": 1e-05,
+  "lotSz": 0.1,
+  "minSz": 0.1,
+  "ctVal": 10.0,
+  "usd24h": 40948730.87032,
+  "last": 0.14434,
+  "tick_bps": 0.6928086462519052
+ },
+ {
+  "instId": "SKHY-USDT-SWAP",
+  "tickSz": 0.01,
+  "lotSz": 0.01,
+  "minSz": 0.01,
+  "ctVal": 1.0,
+  "usd24h": 40771306.4453,
+  "last": 190.01,
+  "tick_bps": 0.526288090100521
+ },
+ {
+  "instId": "ETHFI-USDT-SWAP",
+  "tickSz": 0.0001,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 1.0,
+  "usd24h": 40106252.8062,
+  "last": 0.7686,
+  "tick_bps": 1.3010668748373668
+ },
+ {
+  "instId": "ENA-USDT-SWAP",
+  "tickSz": 1e-05,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 10.0,
+  "usd24h": 40067448.2892,
+  "last": 0.14172,
+  "tick_bps": 0.7056167090036692
+ },
+ {
+  "instId": "LIT-USDT-SWAP",
+  "tickSz": 0.0001,
+  "lotSz": 1.0,
+  "minSz": 1.0,
+  "ctVal": 1.0,
+  "usd24h": 38967134.063,
+  "last": 4.3343,
+  "tick_bps": 0.23071776296057037
+ }
+]

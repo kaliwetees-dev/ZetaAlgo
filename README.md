@@ -696,6 +696,65 @@ If you want the leverage, the mitigations are structural, not parametric: one
 position at a time, or isolated margin instead of cross, or sizing so total
 notional across open positions stays inside what a 10% joint move can absorb.
 
+### Scanning 30 OKX perps: breadth is diversification, not selection
+
+`tools/universe_scan.py` runs the strategy across a whole universe and prints
+every result, including losers and blown accounts. Top 30 USDT perps by real
+USD turnover (base-currency volume x price -- OKX's `volCcy24h` alone ranks
+memecoins absurdly high), 15m, 120 days:
+
+| at $500 notional/position | at $50 notional/position |
+|---|---|
+| 25 / 29 positive (86%) | **26 / 29 positive (90%)** |
+| median +$64.03 | median +$6.42 |
+| **2 accounts to zero** (LAB, SOXL) | **0 accounts to zero** |
+
+LAB took 9 liquidations with a worst trade of −$87.61 on a −17.61% move, and
+SOXL 9 on −8.54%. So cross margin at $500 on a $100 account *does* blow up --
+it simply did not happen on ETH/SOL/BTC, which is exactly the danger of
+judging a strategy on three instruments.
+
+**You cannot pick the winners.** The rank correlation between an
+instrument's first-half and second-half profit factor is **−0.11**:
+
+| selected on first half | second-half median PF |
+|---|---|
+| best third | 1.27 |
+| worst third | **1.45** |
+| whole universe | 1.39 |
+
+Last period's laggards beat last period's leaders. Any procedure that chooses
+instruments by past results is therefore worse than owning all of them.
+
+### The portfolio that follows from that
+
+26 executable instruments (tick under 4 bps -- TRUMP at 5.0, NEAR at 4.2 and
+BEAT at 11.25 bps cannot support a ~12 bps target), all traded small from one
+$100 account. Peak concurrency is 16 positions, average 1.6:
+
+| per position | peak notional | peak leverage | net | max DD | lowest equity | liq |
+|---|---|---|---|---|---|---|
+| $500 | $8,000 | 80x | +885.84 | 292% | **−$220** | 18 |
+| $100 | $1,600 | 16x | +176.62 | 77.7% | $23.00 | 0 |
+| **$50** | **$800** | **8x** | **+87.96** | **34.9%** | **$66.06** | **0** |
+| $25 | $400 | 4x | +43.67 | 17.1% | $83.48 | 0 |
+
+Held-out second half only:
+
+| per position | net | return | max DD | lowest equity |
+|---|---|---|---|---|
+| $100 | +91.21 | +91.2% | 37.6% | $83.39 |
+| **$50** | **+45.50** | **+45.5%** | **23.4%** | **$92.07** |
+| $25 | +22.69 | +22.7% | 14.9% | $96.44 |
+
+This is the best configuration in the repo: 26 instruments rather than three,
+90% of them positive, no liquidations, and a held-out return that survives on
+data no parameter touched. It is also still one 120-day window in one asset
+class, 86-90% of a correlated universe being positive is consistent with a
+favourable regime rather than a durable edge, and the 1H series over a full
+year contains a single −94 month as a reminder of what the other kind of
+regime does.
+
 ### The conclusion a $100 account should draw
 
 The strategy does not scale badly -- the percentages hold. The problem is that
