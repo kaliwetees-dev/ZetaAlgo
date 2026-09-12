@@ -4,7 +4,8 @@ An automated intraday trading system for the "EMA 9 × VWAP crossover" setup,
 with an event-driven backtester, walk-forward validation and a live-execution
 layer that provably reproduces the backtest.
 
-**Result up front: this setup does not make money on any data tested.**
+**Two strategies are implemented and neither makes money on the data tested.**
+The EMA9 x VWAP crossover as published:
 On 60 sessions of real 5-minute US equity bars, pooled profit factor is 0.80
 (still 0.93 with costs set to zero). On OKX perpetual futures — including
 XAU-USDT-SWAP — it loses on every instrument, every timeframe and in both
@@ -290,6 +291,77 @@ The most useful thing this repo can do for you now is test a *different* idea
 cheaply. The engine, the costs, the fee-drag diagnostic and the parity
 guarantee are reusable; only `strategy.py` encodes these particular rules.
 
+## Second strategy: CHoCH -> BOS -> volume-profile POC retest
+
+A different idea entirely, implemented against the same engine
+(`--strategy smc`): track market structure from swing pivots; a **CHoCH** (a
+break against the prevailing structure) sets the bias; wait for the **first
+BOS** in that direction to confirm it; run a **fixed-range volume profile**
+over that swing leg to find the **POC**; then rest a limit order and take the
+trade when price **retests** it.
+
+```bash
+python3 -m zetaalgo run --csv data/xau_usdt_swap_5m.csv --strategy smc \
+        --tick-size 0.1 --commission-bps 5 --maker-bps 2
+```
+
+The three judgement calls, all configurable: which leg to profile
+(`--leg-anchor`, default the impulse origin), whether to enter at the POC or
+the far edge of the value area (`--entry-level`), and where the stop goes
+(`--smc-stop`).
+
+### The bug that made it look profitable
+
+A first pass showed this strategy making money at 1H on OKX perps: profit
+factor 2.62, **t = +4.28**, all four instruments positive, and a held-out
+second half that was *stronger* than the first. It was an artifact.
+
+**73% of trades opened and closed on the same bar, carrying 83% of the
+profit.** The engine was crediting the target on the entry bar. For a
+*breakout* entry that is defensible -- the trigger is crossed on the way up,
+so the range above it is plausibly post-fill. For a **pullback** entry it is
+exactly inverted: a limit fills as price moves *against* the trade, so that
+bar's favourable extreme may well have printed *before* the fill. Claiming it
+invents profit out of an unknowable intrabar path.
+
+The fix is a continuity argument. If a bar **closes** beyond a level, price
+must have traversed that level after the fill, whatever route it took. If the
+bar merely *wicks* past and closes back inside, nothing is proven. So on the
+entry bar of a limit fill, only outcomes the close proves are booked; the rest
+carry to the next bar, where the whole range is legitimately post-fill.
+
+| 1H OKX perps, same config | profit factor | net | t-stat |
+|---|---|---|---|
+| entry-bar target credited (wrong) | 2.62 | +24,299 | +4.28 |
+| only what the close proves (correct) | 0.74 | −7,546 | −1.31 |
+
+That single assumption *was* the entire edge. It is the same class of error as
+the entry-bar stop documented above, and it is why this repo treats every
+intrabar path assumption as an explicit, testable decision rather than a
+default.
+
+### What it does on real data
+
+Corrected, with maker fees credited on the limit entry (OKX VIP0: 2 bps maker,
+5 bps taker):
+
+| pooled sweep | combinations above break-even |
+|---|---|
+| OKX perps 5m | **0 / 48** (best PF 0.56) |
+| OKX perps 1H | **0 / 40** (best PF 0.74) |
+| US equities 5m | 9 / 40 (best PF 1.34) |
+
+The equity result is an in-sample sweep, and it does not survive: tested where
+it was not selected, the winner falls to PF 0.73 on the held-out second half
+and PF 0.65 on SPY/QQQ/AAPL, leaving NVDA/TSLA/AMD to carry it -- the same
+three high-volatility names that carried the EMA/VWAP sweep.
+
+One honest positive: at **zero fees** the 5m signal is mildly profitable on
+perps (PF 1.48-1.65 on BTC/ETH/SOL). Unlike EMA/VWAP, which lost even for
+free, there is something in this structure. It is just smaller than the cost
+of trading it -- and the stops here are tighter still, so the fee-per-R
+arithmetic from the section above bites harder, not less.
+
 ### What this does and does not establish
 
 60 sessions is a small sample, one market regime, one asset class. This is
@@ -328,6 +400,8 @@ avoids. Treat synthetic runs as tests of the machinery, never of the idea.
 | `metrics.py` | win rate, PF, expectancy, drawdown, Sharpe/Sortino/Calmar |
 | `reporting.py` | text report and CSV exports |
 | `data.py` | CSV loading, session labelling, synthetic generator |
+| `structure.py` | swing pivots, CHoCH/BOS, fixed-range volume profile |
+| `smc.py` | CHoCH -> BOS -> POC retest strategy (`--strategy smc`) |
 | `cli.py` | `run`, `paper`, `sweep`, `walkforward`, `generate` |
 | `tools/fetch_yahoo.py` | pull real equity intraday bars into the CSV format |
 | `tools/fetch_okx.py` | pull OKX perpetual candles and contract specs |

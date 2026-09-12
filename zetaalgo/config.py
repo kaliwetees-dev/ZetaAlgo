@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 @dataclass
@@ -110,7 +110,13 @@ class BacktestConfig:
     fixed_qty: float = 100.0
     notional_pct: float = 0.25  # fraction of equity deployed per trade
     max_notional_pct: float = 1.0  # leverage cap: position value / equity
-    commission_bps: float = 1.0  # per side, on traded notional
+    commission_bps: float = 1.0  # taker, per side, on traded notional
+    # Venues charge less for providing liquidity.  A pullback strategy resting
+    # a limit order at a level is a MAKER on entry, and on a limit take-profit
+    # too; only stop-outs and forced exits cross the spread.  Leaving this
+    # None charges the taker rate on everything, which understates a
+    # limit-entry strategy.  OKX VIP0 is 0.02% maker / 0.05% taker.
+    maker_bps: Optional[float] = None
     commission_per_share: float = 0.0
     min_commission: float = 0.0
     slippage_ticks: float = 1.0  # applied adversely on entry and exit

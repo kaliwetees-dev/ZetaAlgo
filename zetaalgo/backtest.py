@@ -61,10 +61,21 @@ class Backtester:
         self,
         strategy_config: Optional[StrategyConfig] = None,
         backtest_config: Optional[BacktestConfig] = None,
+        strategy: Optional[object] = None,
     ) -> None:
-        self.strategy_config = strategy_config or StrategyConfig()
+        """``strategy`` may be any object implementing the strategy interface.
+
+        Passing one lets a different set of rules reuse this engine unchanged,
+        which is the point: execution realism, costs and the live/backtest
+        parity guarantee are properties of the engine, not of the rules.
+        """
+        if strategy is not None:
+            self.strategy = strategy
+            self.strategy_config = getattr(strategy, "config", strategy_config)
+        else:
+            self.strategy_config = strategy_config or StrategyConfig()
+            self.strategy = EmaVwapCrossoverStrategy(self.strategy_config)
         self.config = backtest_config or BacktestConfig()
-        self.strategy = EmaVwapCrossoverStrategy(self.strategy_config)
 
     # ------------------------------------------------------------------
     def run(self, bars: Sequence[Bar]) -> BacktestResult:
@@ -111,17 +122,33 @@ class Backtester:
                 plan = strategy.entry_plan(i)
                 if plan is not None and self._session_budget_left(bar.session):
                     long = plan.direction > 0
-                    touched = bar.high >= plan.trigger_price if long else bar.low <= plan.trigger_price
+                    trigger = plan.trigger_price
+                    through = plan.fill_through_ticks * scfg.tick_size
+                    if plan.order_kind == "limit":
+                        # A pullback entry: price has to come BACK to the level.
+                        # ``fill_through_ticks`` can demand it trade through
+                        # rather than merely touch, which is the honest way to
+                        # model queue position on a resting limit.
+                        touched = (bar.low <= trigger - through if long
+                                   else bar.high >= trigger + through)
+                    else:
+                        touched = (bar.high >= trigger if long else bar.low <= trigger)
                     if touched:
-                        if long:
-                            fill = min(max(bar.open, plan.trigger_price) + slip, bar.high)
+                        if plan.order_kind == "limit":
+                            # A limit never fills worse than its price; a bar
+                            # that opened beyond it fills at the open instead.
+                            fill = min(bar.open, trigger) if long else max(bar.open, trigger)
+                        elif long:
+                            fill = min(max(bar.open, trigger) + slip, bar.high)
                         else:
                             # Mirror image: a sell-stop fills at the trigger, or
                             # at the open when the bar gapped below it.
-                            fill = max(min(bar.open, plan.trigger_price) - slip, bar.low)
+                            fill = max(min(bar.open, trigger) - slip, bar.low)
                         self._open_position(
                             i, bar, fill, plan.stop_price, size_price=plan.trigger_price,
                             direction=plan.direction,
+                            maker=plan.order_kind == "limit",
+                            entry_kind=plan.order_kind,
                         )
                         strategy.consume_setup()
                         if self.position is not None:
@@ -174,6 +201,8 @@ class Backtester:
         stop: float,
         size_price: Optional[float] = None,
         direction: int = 1,
+        maker: bool = False,
+        entry_kind: str = "stop",
     ) -> None:
         cfg = self.config
         scfg = self.strategy_config
@@ -188,7 +217,7 @@ class Backtester:
         qty = position_size(self.equity, size_price or fill, stop, cfg)
         if qty <= 0:
             return
-        fee = commission(qty, fill, cfg)
+        fee = commission(qty, fill, cfg, maker=maker)
         if direction > 0:
             cost = qty * fill + fee
             if cost > self.cash:
@@ -196,7 +225,7 @@ class Backtester:
                 qty = float(int((self.cash - fee) / fill))
                 if qty <= 0:
                     return
-                fee = commission(qty, fill, cfg)
+                fee = commission(qty, fill, cfg, maker=maker)
         # Shorts receive proceeds instead of paying cash; the leverage cap in
         # position_size is what bounds them.
         self.cash -= direction * qty * fill + fee
@@ -212,6 +241,7 @@ class Backtester:
             initial_stop=stop,
             session=bar.session,
             direction=direction,
+            entry_kind=entry_kind,
             entry_commission=fee,
         )
         self._trades_this_session[bar.session] = (
@@ -237,7 +267,17 @@ class Backtester:
         # unless the pessimistic policy is selected the close is used for both
         # sides rather than contaminated wicks.
         way = position.direction
+        # A breakout entry is crossed on the way INTO the trade, so the range
+        # beyond the trigger is plausibly post-fill.  A pullback (limit) entry
+        # is the mirror: it fills as price moves AGAINST the trade, so that
+        # bar's favourable extreme may well have printed BEFORE the fill.
+        # Claiming it would invent profit, so on the entry bar of a limit fill
+        # only outcomes proven by the close are taken: if the bar closes beyond
+        # a level, continuity says price crossed it after the fill.
+        limit_entry_bar = entry_bar and position.entry_kind == "limit"
         use_full_range = not entry_bar or scfg.entry_bar_stop == "low"
+        if limit_entry_bar:
+            use_full_range = False
         if use_full_range:
             best, worst = (bar.high, bar.low) if way > 0 else (bar.low, bar.high)
             position.mfe = max(position.mfe, way * (best - position.entry_price))
@@ -250,6 +290,21 @@ class Backtester:
         # -- intrabar: stop first, then target ---------------------------
         # On the entry bar the open precedes the fill, so a gap-through-open
         # exit does not apply there.
+        if limit_entry_bar:
+            if way * (bar.close - position.stop_price) <= 0:
+                return self._close_position(index, bar, bar.close - way * slip, "stop")
+            if position.target_price is not None and (
+                way * (bar.close - position.target_price) >= 0
+            ):
+                return self._close_position(index, bar, position.target_price, "target")
+            # Neither level is proven; carry the position to the next bar.
+            reason = self.strategy.close_exit_reason(index, position.entry_index, way)
+            if reason is not None:
+                return self._close_position(index, bar, bar.close - way * slip, reason)
+            if scfg.flat_at_session_end and last_of_session:
+                return self._close_position(index, bar, bar.close - way * slip, "session_end")
+            return False
+
         stop_active = not entry_bar or scfg.entry_bar_stop == "low"
         stop_touched = (bar.low <= position.stop_price if way > 0
                         else bar.high >= position.stop_price)
@@ -304,7 +359,9 @@ class Backtester:
         cfg = self.config
         fill = max(0.0, fill)
         way = position.direction
-        fee = commission(position.qty, fill, cfg)
+        # A take-profit rests as a limit and therefore earns the maker rate;
+        # stops and forced exits cross the spread.
+        fee = commission(position.qty, fill, cfg, maker=reason == "target")
         self.cash += way * position.qty * fill - fee
         gross = way * (fill - position.entry_price) * position.qty
         total_fees = fee + position.entry_commission
@@ -346,6 +403,7 @@ def run_backtest(
     bars: Sequence[Bar],
     strategy_config: Optional[StrategyConfig] = None,
     backtest_config: Optional[BacktestConfig] = None,
+    strategy: Optional[object] = None,
 ) -> BacktestResult:
     """Convenience wrapper: build a ``Backtester`` and run it once."""
-    return Backtester(strategy_config, backtest_config).run(bars)
+    return Backtester(strategy_config, backtest_config, strategy).run(bars)

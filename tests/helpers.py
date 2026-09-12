@@ -50,3 +50,17 @@ def ramp(flat: int = 12, rise: int = 10, base: float = 100.0, step: float = 0.25
     EMA above it, which is the rule-1 crossover the strategy waits for.
     """
     return [base] * flat + [base + step * (i + 1) for i in range(rise)]
+
+
+def zigzag(turning_points, bars_per_leg: int = 4) -> List[float]:
+    """Interpolate a close series through a list of turning points.
+
+    A market that only ever falls has no swing lows to break, so structure
+    tests need genuine retracements: this builds the alternating legs that
+    actually produce pivots.
+    """
+    closes: List[float] = [float(turning_points[0])]
+    for start, end in zip(turning_points, turning_points[1:]):
+        for step in range(1, bars_per_leg + 1):
+            closes.append(start + (end - start) * step / bars_per_leg)
+    return closes

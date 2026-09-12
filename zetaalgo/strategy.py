@@ -68,6 +68,12 @@ class EntryPlan:
     confirm_index: int
     setup_session: str
     direction: int = LONG
+    # "stop" = breakout entry, filled when price trades THROUGH the trigger in
+    # the trade's direction.  "limit" = pullback entry, filled when price comes
+    # BACK to the level.  The two fill in opposite circumstances, so the engine
+    # has to be told which one it is holding.
+    order_kind: str = "stop"
+    fill_through_ticks: int = 0
 
     @property
     def is_long(self) -> bool:

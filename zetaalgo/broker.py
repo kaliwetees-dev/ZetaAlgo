@@ -23,6 +23,7 @@ class Position:
     initial_stop: float
     session: str
     direction: int = 1  # +1 long, -1 short
+    entry_kind: str = "stop"  # how the entry filled: stop (breakout) | limit
     entry_commission: float = 0.0
     breakeven_done: bool = False
     mfe: float = 0.0  # max favourable excursion, in price
@@ -73,11 +74,20 @@ class Trade:
         return self.net_pnl / notional if notional else 0.0
 
 
-def commission(qty: float, price: float, config: BacktestConfig) -> float:
-    """Per-side commission: the larger of the bps, per-share and floor terms."""
+def commission(
+    qty: float, price: float, config: BacktestConfig, maker: bool = False
+) -> float:
+    """Per-side commission: the larger of the bps, per-share and floor terms.
+
+    ``maker=True`` applies the maker rate when the config defines one, for
+    fills that provided liquidity rather than crossing the spread.
+    """
     if qty <= 0:
         return 0.0
-    bps = price * qty * config.commission_bps / 10_000.0
+    rate = config.commission_bps
+    if maker and config.maker_bps is not None:
+        rate = config.maker_bps
+    bps = price * qty * rate / 10_000.0
     per_share = qty * config.commission_per_share
     return max(bps + per_share, config.min_commission)
 

@@ -18,6 +18,8 @@ from .indicators import atr, ema, session_vwap, sma
 from .live import BrokerAdapter, LiveTrader, Order, PaperBroker, run_paper_session
 from .metrics import Metrics, compute_metrics
 from .reporting import format_report
+from .smc import SmcConfig, SmcStrategy
+from .structure import StructureTracker, VolumeProfile, fixed_range_profile, swing_points
 from .strategy import EmaVwapCrossoverStrategy, EntryPlan, Setup
 
 __version__ = "1.0.0"
@@ -36,7 +38,11 @@ __all__ = [
     "PaperBroker",
     "Position",
     "Setup",
+    "SmcConfig",
+    "SmcStrategy",
     "StrategyConfig",
+    "StructureTracker",
+    "VolumeProfile",
     "Trade",
     "atr",
     "compute_metrics",
@@ -45,8 +51,10 @@ __all__ = [
     "generate_synthetic",
     "load_csv",
     "run_backtest",
+    "fixed_range_profile",
     "run_paper_session",
     "session_vwap",
+    "swing_points",
     "sma",
     "write_csv",
 ]

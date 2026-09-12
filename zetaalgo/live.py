@@ -54,6 +54,7 @@ class Order:
     # broker resolves this against the actual fill price.
     target_r: Optional[float] = None
     direction: int = 1  # +1 long, -1 short
+    fill_through_ticks: int = 0
     reason: str = ""
     ts: Optional[datetime] = None
 
@@ -145,6 +146,7 @@ class PaperBroker(BrokerAdapter):
         self.working: Dict[str, Order] = {}
         self.stop_price: Optional[float] = None
         self.target_price: Optional[float] = None
+        self.entry_kind: str = "stop"
         self.fills: List[Fill] = []
         self._next_id = 1
         self._last_close = 0.0
@@ -217,16 +219,27 @@ class PaperBroker(BrokerAdapter):
 
         if self.qty == 0:
             for order_id, order in list(self.working.items()):
-                if order.order_type != "stop" or order.price is None:
+                if order.order_type not in ("stop", "limit") or order.price is None:
                     continue
                 way = order.direction
-                touched = (bar.high >= order.price if way > 0 else bar.low <= order.price)
+                through = order.fill_through_ticks * self.tick_size
+                if order.order_type == "limit":
+                    # Pullback entry: price has to come BACK to the level.
+                    touched = (bar.low <= order.price - through if way > 0
+                               else bar.high >= order.price + through)
+                else:
+                    touched = (bar.high >= order.price if way > 0
+                               else bar.low <= order.price)
                 if touched:
-                    if way > 0:
+                    if order.order_type == "limit":
+                        fill = (min(bar.open, order.price) if way > 0
+                                else max(bar.open, order.price))
+                    elif way > 0:
                         fill = min(max(bar.open, order.price) + slip, bar.high)
                     else:
                         fill = max(min(bar.open, order.price) - slip, bar.low)
                     self.working.pop(order_id, None)
+                    self.entry_kind = order.order_type
                     self._fill(order, fill, ts=bar.ts)
                     self._entry_bar_brackets(bar, slip)
 
@@ -240,6 +253,15 @@ class PaperBroker(BrokerAdapter):
         if self.qty == 0:
             return
         way = 1 if self.qty > 0 else -1
+        if self.entry_kind == "limit":
+            # Mirrors backtest.py: a limit fills as price moves against the
+            # trade, so this bar's favourable extreme may predate the fill.
+            # Only outcomes the close proves are taken.
+            if self.stop_price is not None and way * (bar.close - self.stop_price) <= 0:
+                self._exit(bar, bar.close - way * slip, "stop")
+            elif self.target_price is not None and way * (bar.close - self.target_price) >= 0:
+                self._exit(bar, self.target_price, "target")
+            return
         if self.stop_price is not None:
             touched = (bar.low <= self.stop_price if way > 0
                        else bar.high >= self.stop_price)
@@ -259,7 +281,10 @@ class PaperBroker(BrokerAdapter):
                 self._exit(bar, self.target_price, "target")
 
     def _fill(self, order: Order, price: float, ts: Optional[datetime] = None) -> None:
-        fee = commission(order.qty, price, self.config)
+        # A resting limit provided liquidity, so it earns the maker rate --
+        # as does a limit take-profit.  Stops and forced exits cross.
+        maker = order.order_type == "limit" or order.reason == "target"
+        fee = commission(order.qty, price, self.config, maker=maker)
         stamp = ts or order.ts or datetime.min
         opening = self.qty == 0
         if opening:
@@ -274,7 +299,7 @@ class PaperBroker(BrokerAdapter):
                     logger.warning("insufficient cash for %s; order dropped", order)
                     return
                 order = replace(order, qty=capped)
-                fee = commission(order.qty, price, self.config)
+                fee = commission(order.qty, price, self.config, maker=maker)
             self.cash -= way * order.qty * price + fee
             self.qty = way * order.qty
             self.avg_price = price
@@ -316,11 +341,17 @@ class LiveTrader:
         strategy_config: Optional[StrategyConfig] = None,
         backtest_config: Optional[BacktestConfig] = None,
         window: int = 800,
+        strategy: Optional[object] = None,
     ) -> None:
+        """``strategy`` may be any object implementing the strategy interface."""
         self.broker = broker
-        self.strategy_config = strategy_config or StrategyConfig()
+        if strategy is not None:
+            self.strategy = strategy
+            self.strategy_config = getattr(strategy, "config", strategy_config)
+        else:
+            self.strategy_config = strategy_config or StrategyConfig()
+            self.strategy = EmaVwapCrossoverStrategy(self.strategy_config)
         self.config = backtest_config or BacktestConfig()
-        self.strategy = EmaVwapCrossoverStrategy(self.strategy_config)
         self.window = window
         self.bars: List[Bar] = []
         self.entry_order_id: Optional[str] = None
@@ -338,6 +369,7 @@ class LiveTrader:
         # stored at entry stops pointing at the entry bar.
         self.entry_bars_seen: Optional[int] = None
         self.direction: int = 1
+        self.entry_kind: str = "stop"
         self.mfe: float = 0.0
         self.breakeven_done: bool = False
 
@@ -397,6 +429,7 @@ class LiveTrader:
                 if order is not None:
                     self.planned_stop = plan_next.stop_price
                     self.direction = plan_next.direction
+                    self.entry_kind = plan_next.order_kind
                     self.entry_order_id = self.broker.submit(order)
                     self.working_setup_key = self._setup_key(plan_next)
                     submitted.append(order)
@@ -524,8 +557,9 @@ class LiveTrader:
         return Order(
             side="buy" if plan.direction > 0 else "sell",
             qty=qty,
-            order_type="stop",
+            order_type=plan.order_kind,
             direction=plan.direction,
+            fill_through_ticks=plan.fill_through_ticks,
             price=plan.trigger_price,
             stop_loss=plan.stop_price,
             target_r=target_r,
@@ -553,6 +587,7 @@ def run_paper_session(
     bars: Sequence[Bar],
     strategy_config: Optional[StrategyConfig] = None,
     backtest_config: Optional[BacktestConfig] = None,
+    strategy: Optional[object] = None,
 ) -> PaperBroker:
     """Stream bars through ``LiveTrader`` + ``PaperBroker``.
 
@@ -560,11 +595,11 @@ def run_paper_session(
     brackets, cancellations) rather than the vectorised backtest path, which
     makes it the right place to catch wiring bugs before going live.
     """
-    scfg = strategy_config or StrategyConfig()
+    scfg = getattr(strategy, "config", None) or strategy_config or StrategyConfig()
     broker = PaperBroker(
         backtest_config, tick_size=scfg.tick_size, entry_bar_stop=scfg.entry_bar_stop
     )
-    trader = LiveTrader(broker, scfg, backtest_config)
+    trader = LiveTrader(broker, scfg, backtest_config, strategy=strategy)
     for i, bar in enumerate(bars):
         last_of_session = i + 1 >= len(bars) or bars[i + 1].session != bar.session
         broker.on_bar(bar)  # fill resting orders / brackets from this bar

@@ -71,7 +71,25 @@ def format_report(
         "",
     ]
 
-    if scfg is not None:
+    if scfg is not None and not hasattr(scfg, "ema_period"):
+        # CHoCH/BOS/POC configuration.
+        lines += [
+            "--- SETUP RULES " + "-" * (width - 16),
+            f"  Structure   swings {scfg.swing_left}/{scfg.swing_right} bars, "
+            f"{'close' if scfg.use_close_break else 'wick'}-through breaks",
+            f"  Sequence    CHoCH -> first BOS within {scfg.bos_window} bars "
+            f"-> {scfg.entry_level} retest within {scfg.retest_window} bars",
+            f"  Profile     fixed range over the {scfg.leg_anchor} leg, "
+            f"{scfg.profile_bins} bins",
+            f"  Entry       resting LIMIT at the {scfg.entry_level}"
+            + (f", needing {scfg.fill_through_ticks} tick(s) through"
+               if scfg.fill_through_ticks else ", on touch"),
+            f"  Stop        {scfg.stop_mode} (min {scfg.min_risk_atr:g} x ATR), "
+            f"target {scfg.target_r:g}R, breakeven at {scfg.breakeven_at_r:g}R",
+            f"  Direction   longs {scfg.trade_longs}, shorts {scfg.trade_shorts}",
+            "",
+        ]
+    elif scfg is not None:
         lines += [
             "--- SETUP RULES " + "-" * (width - 16),
             f"  EMA period {scfg.ema_period}, session-anchored VWAP, ATR({scfg.atr_period})",

@@ -22,6 +22,7 @@ from .backtest import run_backtest
 from .config import BacktestConfig, StrategyConfig, apply_overrides
 from .data import Bar, generate_synthetic, load_csv, write_csv
 from .live import run_paper_session
+from .smc import SmcConfig, SmcStrategy
 from .metrics import compute_metrics
 from .reporting import (
     format_report,
@@ -64,8 +65,60 @@ def _add_data_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--symbol", default="SYNTHETIC", help="label used in reports")
 
 
+def _add_smc_args(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_argument_group("CHoCH/BOS/POC rules (--strategy smc)")
+    group.add_argument("--swing", type=int, default=3,
+                       help="bars either side of a swing pivot")
+    group.add_argument("--bos-window", type=int, default=30,
+                       help="bars after the CHoCH to wait for the first BOS")
+    group.add_argument("--retest-window", type=int, default=40,
+                       help="bars after the BOS to wait for the POC retest")
+    group.add_argument("--profile-bins", type=int, default=24)
+    group.add_argument("--leg-anchor", choices=("swing", "choch"), default="swing")
+    group.add_argument("--entry-level", choices=("poc", "value_area"), default="poc")
+    group.add_argument("--smc-stop", choices=("leg", "atr", "profile"), default="profile")
+    group.add_argument("--fill-through-ticks", type=int, default=0,
+                       help="require price to trade THROUGH the level, not just touch it")
+    group.add_argument("--wick-breaks", action="store_true",
+                       help="a wick through a swing counts as a break (default: close)")
+    group.add_argument("--no-shorts", action="store_true",
+                       help="long only (this strategy trades both ways by default)")
+
+
+def build_smc_config(args: argparse.Namespace) -> SmcConfig:
+    return SmcConfig(
+        trade_longs=not args.no_longs,
+        trade_shorts=not args.no_shorts,
+        swing_left=args.swing,
+        swing_right=args.swing,
+        use_close_break=not args.wick_breaks,
+        bos_window=args.bos_window,
+        retest_window=args.retest_window,
+        profile_bins=args.profile_bins,
+        leg_anchor=args.leg_anchor,
+        entry_level=args.entry_level,
+        stop_mode=args.smc_stop,
+        fill_through_ticks=args.fill_through_ticks,
+        tick_size=args.tick_size,
+        target_r=args.target_r,
+        breakeven_at_r=args.breakeven_r,
+        max_bars_in_trade=args.max_bars,
+        entry_bar_stop=args.entry_bar_stop,
+        flat_at_session_end=not args.hold_overnight,
+        max_trades_per_session=args.max_trades_per_session,
+        cooldown_bars=args.cooldown_bars,
+    )
+
+
 def _add_strategy_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("strategy rules")
+    group.add_argument(
+        "--strategy",
+        choices=("emavwap", "smc"),
+        default="emavwap",
+        help="emavwap: EMA9 x VWAP crossover.  smc: CHoCH -> BOS -> volume "
+             "profile POC retest.",
+    )
     group.add_argument(
         "--shorts",
         action="store_true",
@@ -145,7 +198,11 @@ def _add_account_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--fixed-qty", type=float, default=100.0)
     group.add_argument("--notional-pct", type=float, default=0.25)
     group.add_argument("--max-notional", type=float, default=1.0, help="leverage cap")
-    group.add_argument("--commission-bps", type=float, default=1.0)
+    group.add_argument("--commission-bps", type=float, default=1.0,
+                       help="taker fee per side, in basis points")
+    group.add_argument("--maker-bps", type=float, default=None,
+                       help="maker fee per side; limit entries and limit "
+                            "take-profits are charged this instead (OKX VIP0: 2)")
     group.add_argument("--commission-per-share", type=float, default=0.0)
     group.add_argument("--slippage-ticks", type=float, default=1.0)
     group.add_argument("--fractional", action="store_true", help="allow fractional quantity")
@@ -178,6 +235,13 @@ def build_strategy_config(args: argparse.Namespace) -> StrategyConfig:
     )
 
 
+def build_strategy(args: argparse.Namespace):
+    """The strategy object the engine should run, or None for the default."""
+    if getattr(args, "strategy", "emavwap") == "smc":
+        return SmcStrategy(build_smc_config(args))
+    return None
+
+
 def build_backtest_config(args: argparse.Namespace) -> BacktestConfig:
     return BacktestConfig(
         initial_equity=args.equity,
@@ -187,6 +251,7 @@ def build_backtest_config(args: argparse.Namespace) -> BacktestConfig:
         notional_pct=args.notional_pct,
         max_notional_pct=args.max_notional,
         commission_bps=args.commission_bps,
+        maker_bps=args.maker_bps,
         commission_per_share=args.commission_per_share,
         slippage_ticks=args.slippage_ticks,
         allow_fractional_qty=args.fractional,
@@ -235,7 +300,7 @@ def parse_grid(spec: str) -> List[Dict[str, str]]:
 def cmd_run(args: argparse.Namespace) -> int:
     bars = load_bars(args)
     scfg, bcfg = build_strategy_config(args), build_backtest_config(args)
-    result = run_backtest(bars, scfg, bcfg)
+    result = run_backtest(bars, scfg, bcfg, strategy=build_strategy(args))
     metrics = compute_metrics(result)
 
     if args.json:
@@ -273,7 +338,7 @@ def cmd_paper(args: argparse.Namespace) -> int:
     )
     bars = load_bars(args)
     scfg, bcfg = build_strategy_config(args), build_backtest_config(args)
-    broker = run_paper_session(bars, scfg, bcfg)
+    broker = run_paper_session(bars, scfg, bcfg, strategy=build_strategy(args))
 
     buys = [f for f in broker.fills if f.side == "buy"]
     print(f"\npaper run over {len(bars):,} bars: {len(buys)} entries, "
@@ -282,7 +347,7 @@ def cmd_paper(args: argparse.Namespace) -> int:
           f"(started {bcfg.initial_equity:,.2f}, flat at end: {broker.qty == 0})")
 
     if args.compare:
-        result = run_backtest(bars, scfg, bcfg)
+        result = run_backtest(bars, scfg, bcfg, strategy=build_strategy(args))
         gap = broker.equity() - result.final_equity
         print(f"backtest equity {result.final_equity:,.2f} -> live/backtest gap {gap:+,.2f}")
         print(f"trade count: paper {len(buys)} vs backtest {len(result.trades)}")
@@ -437,6 +502,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = subparsers.add_parser("run", help="backtest the strategy")
     _add_data_args(run)
     _add_strategy_args(run)
+    _add_smc_args(run)
     _add_account_args(run)
     run.add_argument("--trades-csv")
     run.add_argument("--equity-csv")
@@ -450,6 +516,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_data_args(paper)
     _add_strategy_args(paper)
+    _add_smc_args(paper)
     _add_account_args(paper)
     paper.add_argument("--verbose", action="store_true", help="log every order and fill")
     paper.add_argument(
@@ -462,6 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
     sweep = subparsers.add_parser("sweep", help="grid-search parameters")
     _add_data_args(sweep)
     _add_strategy_args(sweep)
+    _add_smc_args(sweep)
     _add_account_args(sweep)
     sweep.add_argument(
         "--grid",
@@ -476,6 +544,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_data_args(walk)
     _add_strategy_args(walk)
+    _add_smc_args(walk)
     _add_account_args(walk)
     walk.add_argument("--grid", required=True)
     walk.add_argument("--folds", type=int, default=4)
