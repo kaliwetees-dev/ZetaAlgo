@@ -74,6 +74,11 @@ class EntryPlan:
     # has to be told which one it is holding.
     order_kind: str = "stop"
     fill_through_ticks: int = 0
+    # An absolute take-profit level, when the strategy has one in mind (a
+    # mean-reversion exit is a *price* -- the mean -- not a multiple of
+    # whatever risk the fill happened to produce).  Leaving it None makes the
+    # engine derive the target from ``target_r`` instead.
+    target_price: Optional[float] = None
 
     @property
     def is_long(self) -> bool:

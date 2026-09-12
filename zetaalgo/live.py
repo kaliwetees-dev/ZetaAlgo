@@ -255,9 +255,10 @@ class PaperBroker(BrokerAdapter):
             return
         way = 1 if self.qty > 0 else -1
         if self.entry_kind == "limit":
-            # Mirrors backtest.py: a limit fills as price moves against the
+            # Mirrors backtest.py: a limit fills as price moves AGAINST the
             # trade, so this bar's favourable extreme may predate the fill.
-            # Only outcomes the close proves are taken.
+            # Only outcomes the close proves are booked; the rest carry to the
+            # next bar, where the whole range is legitimately post-fill.
             if self.stop_price is not None and way * (bar.close - self.stop_price) <= 0:
                 self._exit(bar, bar.close - way * slip, "stop")
             elif self.target_price is not None and way * (bar.close - self.target_price) >= 0:
@@ -363,6 +364,15 @@ class LiveTrader:
         self.planned_stop: Optional[float] = None
         self.traded_setups: set = set()
         self.working_setup_key: Optional[datetime] = None
+        # Price of the quote currently resting at the broker.  A strategy that
+        # re-derives its level every bar (a market-making quote at a
+        # volatility band) must cancel and replace when that level moves, or
+        # live trades a stale price the backtest never used.
+        self.working_price: Optional[float] = None
+        self.working_stop: Optional[float] = None
+        # An absolute take-profit supplied by the strategy, which must not be
+        # replaced by an R-multiple derived from the fill.
+        self.working_target: Optional[float] = None
         self.session_trades: Dict[str, int] = {}
         self.bars_seen: int = 0
         self.cooldown_until: int = -1
@@ -401,6 +411,7 @@ class LiveTrader:
             if self.working_setup_key is not None:
                 self.traded_setups.add(self.working_setup_key)
                 self.working_setup_key = None
+            self.working_price = self.working_stop = None
             self.session_trades[bar.session] = self.session_trades.get(bar.session, 0) + 1
             self._reconcile_bracket()
 
@@ -423,10 +434,22 @@ class LiveTrader:
         if self.broker.position_qty() == 0:
             self._reset_position_state()
             plan_next = self._eligible_plan(index, last_of_session)
-            if self.entry_order_id is not None and plan_next is None:
+            stale = (
+                self.entry_order_id is not None
+                and plan_next is not None
+                and (
+                    self.working_price is None
+                    or abs(plan_next.trigger_price - self.working_price) > 1e-12
+                    or self.working_stop is None
+                    or abs(plan_next.stop_price - self.working_stop) > 1e-12
+                )
+            )
+            if self.entry_order_id is not None and (plan_next is None or stale):
                 self.broker.cancel(self.entry_order_id)
                 self.entry_order_id = None
                 self.working_setup_key = None
+                self.working_price = self.working_stop = None
+                self.working_target = None
             if plan_next is not None and self.entry_order_id is None:
                 order = self._build_entry_order(bar, plan_next)
                 if order is not None:
@@ -435,6 +458,9 @@ class LiveTrader:
                     self.entry_kind = plan_next.order_kind
                     self.entry_order_id = self.broker.submit(order)
                     self.working_setup_key = self._setup_key(plan_next)
+                    self.working_price = plan_next.trigger_price
+                    self.working_stop = plan_next.stop_price
+                    self.working_target = plan_next.target_price
                     submitted.append(order)
 
         self.orders.extend(submitted)
@@ -515,6 +541,11 @@ class LiveTrader:
         self.entry_fill = fill
         self.mfe = 0.0
         self.breakeven_done = False
+        if self.working_target is not None:
+            # The strategy named a price; a better fill widens the reward
+            # rather than shifting the exit, so leave the level alone.
+            self.broker.update_target(self.working_target)
+            return
         risk = self.direction * (fill - self.planned_stop)
         if risk <= 0:
             return
@@ -556,7 +587,11 @@ class LiveTrader:
         )
         if qty <= 0:
             return None
-        target_r = self.strategy_config.target_r if self.strategy_config.target_r > 0 else None
+        target_r = getattr(self.strategy_config, "target_r", 0.0)
+        target_r = target_r if target_r and target_r > 0 else None
+        absolute_tp = plan.target_price
+        if absolute_tp is not None:
+            target_r = None  # an absolute level wins over the R multiple
         return Order(
             side="buy" if plan.direction > 0 else "sell",
             qty=qty,
@@ -565,6 +600,7 @@ class LiveTrader:
             fill_through_ticks=plan.fill_through_ticks,
             price=plan.trigger_price,
             stop_loss=plan.stop_price,
+            take_profit=absolute_tp,
             target_r=target_r,
             reason=f"ema9xvwap breakout of bar {plan.cross_index}",
             ts=bar.ts,

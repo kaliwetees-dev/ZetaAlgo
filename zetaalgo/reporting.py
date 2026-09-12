@@ -71,7 +71,23 @@ def format_report(
         "",
     ]
 
-    if scfg is not None and not hasattr(scfg, "ema_period"):
+    if scfg is not None and hasattr(scfg, "min_tp_bps"):
+        lines += [
+            "--- SETUP RULES " + "-" * (width - 16),
+            f"  Mean        rolling {scfg.mean_kind} ({scfg.mean_period}), "
+            f"ATR({scfg.vol_period}) as the volatility unit",
+            f"  Quote       resting LIMIT {scfg.entry_z:g} ATR from the mean "
+            f"(maker), longs {scfg.trade_longs} shorts {scfg.trade_shorts}",
+            f"  Exit        {scfg.tp_fraction:g} of the way back to the mean "
+            f"(maker), stop {scfg.stop_z:g} ATR beyond, time stop "
+            f"{scfg.time_stop_bars} bars",
+            f"  FEE FLOOR   refuse any take-profit worth under "
+            f"{scfg.min_tp_bps:g} bps",
+            f"  Confirm     lagging EMA({scfg.trend_period}) veto only, "
+            f"enabled {scfg.trend_filter}",
+            "",
+        ]
+    elif scfg is not None and not hasattr(scfg, "ema_period"):
         # CHoCH/BOS/POC configuration.
         lines += [
             "--- SETUP RULES " + "-" * (width - 16),

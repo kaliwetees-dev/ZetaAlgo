@@ -22,6 +22,7 @@ from .backtest import run_backtest
 from .config import BacktestConfig, StrategyConfig, apply_overrides
 from .data import Bar, generate_synthetic, load_csv, write_csv
 from .live import run_paper_session
+from .scalp import MeanReversionScalp, ScalpConfig
 from .smc import SmcConfig, SmcStrategy
 from .metrics import compute_metrics
 from .reporting import (
@@ -110,14 +111,61 @@ def build_smc_config(args: argparse.Namespace) -> SmcConfig:
     )
 
 
+def _add_scalp_args(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_argument_group("mean-reversion scalp (--strategy scalp)")
+    group.add_argument("--mean-period", type=int, default=20)
+    group.add_argument("--mean-kind", choices=("vwap", "ema", "sma"), default="vwap")
+    group.add_argument("--vol-period", type=int, default=20)
+    group.add_argument("--entry-z", type=float, default=2.0,
+                       help="quote this many ATRs away from the rolling mean")
+    group.add_argument("--tp-fraction", type=float, default=1.0,
+                       help="take profit this far back toward the mean (1.0 = the mean)")
+    group.add_argument("--min-tp-bps", type=float, default=12.0,
+                       help="THE FEE FLOOR: refuse any setup whose take-profit is "
+                            "worth less than this. OKX maker round trip is ~4 bps, "
+                            "so keep this several times larger.")
+    group.add_argument("--stop-z", type=float, default=2.0,
+                       help="stop this many ATRs beyond the quote")
+    group.add_argument("--time-stop", type=int, default=12,
+                       help="abandon a trade that has not reverted in N bars")
+    group.add_argument("--trend-period", type=int, default=200)
+    group.add_argument("--no-trend-filter", action="store_true",
+                       help="drop the lagging confirmation filter")
+    group.add_argument("--max-adverse-slope-bps", type=float, default=4.0)
+
+
+def build_scalp_config(args: argparse.Namespace) -> ScalpConfig:
+    return ScalpConfig(
+        trade_longs=not args.no_longs,
+        trade_shorts=not args.no_shorts,
+        mean_period=args.mean_period,
+        mean_kind=args.mean_kind,
+        vol_period=args.vol_period,
+        entry_z=args.entry_z,
+        tp_fraction=args.tp_fraction,
+        min_tp_bps=args.min_tp_bps,
+        stop_z=args.stop_z,
+        time_stop_bars=args.time_stop,
+        trend_period=args.trend_period,
+        trend_filter=not args.no_trend_filter,
+        max_adverse_slope_bps=args.max_adverse_slope_bps,
+        tick_size=args.tick_size,
+        fill_through_ticks=args.fill_through_ticks,
+        entry_bar_stop=args.entry_bar_stop,
+        max_trades_per_session=args.max_trades_per_session,
+        cooldown_bars=args.cooldown_bars,
+    )
+
+
 def _add_strategy_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("strategy rules")
     group.add_argument(
         "--strategy",
-        choices=("emavwap", "smc"),
+        choices=("emavwap", "smc", "scalp"),
         default="emavwap",
         help="emavwap: EMA9 x VWAP crossover.  smc: CHoCH -> BOS -> volume "
-             "profile POC retest.",
+             "profile POC retest.  scalp: maker mean-reversion at a "
+             "volatility band, with a fee floor on the take-profit.",
     )
     group.add_argument(
         "--shorts",
@@ -241,8 +289,11 @@ def build_strategy_config(args: argparse.Namespace) -> StrategyConfig:
 
 def build_strategy(args: argparse.Namespace):
     """The strategy object the engine should run, or None for the default."""
-    if getattr(args, "strategy", "emavwap") == "smc":
+    kind = getattr(args, "strategy", "emavwap")
+    if kind == "smc":
         return SmcStrategy(build_smc_config(args))
+    if kind == "scalp":
+        return MeanReversionScalp(build_scalp_config(args))
     return None
 
 
@@ -508,6 +559,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_data_args(run)
     _add_strategy_args(run)
     _add_smc_args(run)
+    _add_scalp_args(run)
     _add_account_args(run)
     run.add_argument("--trades-csv")
     run.add_argument("--equity-csv")
@@ -522,6 +574,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_data_args(paper)
     _add_strategy_args(paper)
     _add_smc_args(paper)
+    _add_scalp_args(paper)
     _add_account_args(paper)
     paper.add_argument("--verbose", action="store_true", help="log every order and fill")
     paper.add_argument(
@@ -535,6 +588,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_data_args(sweep)
     _add_strategy_args(sweep)
     _add_smc_args(sweep)
+    _add_scalp_args(sweep)
     _add_account_args(sweep)
     sweep.add_argument(
         "--grid",
@@ -550,6 +604,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_data_args(walk)
     _add_strategy_args(walk)
     _add_smc_args(walk)
+    _add_scalp_args(walk)
     _add_account_args(walk)
     walk.add_argument("--grid", required=True)
     walk.add_argument("--folds", type=int, default=4)

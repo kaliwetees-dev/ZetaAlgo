@@ -4,7 +4,8 @@ An automated intraday trading system for the "EMA 9 × VWAP crossover" setup,
 with an event-driven backtester, walk-forward validation and a live-execution
 layer that provably reproduces the backtest.
 
-**Two strategies are implemented and neither makes money on the data tested.**
+**Three strategies are implemented. Two lose on all data tested; the third
+(a maker mean-reversion scalp) clears costs at 15m but not at 5m.**
 The EMA9 x VWAP crossover as published:
 On 60 sessions of real 5-minute US equity bars, pooled profit factor is 0.80
 (still 0.93 with costs set to zero). On OKX perpetual futures — including
@@ -432,6 +433,89 @@ conclusions in this README were re-checked against the fix and are unchanged,
 because they used tight structural stops where sizing rarely rounded to zero;
 only the wide-stop experiment was affected.
 
+## Third strategy: maker mean-reversion scalp (`--strategy scalp`)
+
+Built to attack the constraint the first two died to, rather than to express a
+chart pattern. The arithmetic that killed them is::
+
+    fee_in_R = 2 * fee_rate / stop_percent
+
+so a 5-minute scalp has exactly two ways out: **never cross the spread**, and
+**make the target dwarf the fee**. Hence:
+
+* Entry is a resting **limit** at a volatility band -- maker, 2 bps on OKX
+  rather than 5. Filled when a burst pushes price to an extreme.
+* The take-profit is also a **limit**, at a price (a fraction of the way back
+  to the mean), so the round trip is ~4 bps instead of ~10. Only stop-outs
+  cross.
+* `--min-tp-bps` is a **hard fee floor**: any setup whose take-profit is worth
+  less than N basis points is refused. This is "cover the fees" written as a
+  gate the strategy cannot trade around.
+* The lagging indicator is **confirmation only** -- a slow EMA that can veto
+  fading a hard trend but can never start a trade.
+
+### Measure the edge before building on it
+
+The reversion edge is real and consistent. Forward return in bps after a dip
+of 2+ ATR below the 20-bar mean, long side, **before costs** (the maker round
+trip is 4 bps, so subtract that):
+
+| 5m, gross bps | +3 bars | +12 | +24 |
+|---|---|---|---|
+| SOL | +2.7 | +4.5 | +6.7 |
+| ETH | +2.1 | +6.0 | +10.7 |
+| BTC | +0.4 | +0.6 | +3.1 |
+| **XAU** | +0.9 | +2.5 | +4.5 |
+
+Every instrument reverts; the sign is consistent across all four and grows
+with horizon. But at 5m the numbers sit right on top of the 4 bps cost. **XAU
+never clears it at any depth** (net -0.9 to +0.8 bps) -- gold's intraday range
+is too small relative to its price, the same reason it was worst for the
+earlier strategies.
+
+### Result: 5m does not work, 15m does
+
+Long-only, ETH+SOL+BTC, maker 2 / taker 5, correct lot sizes, grid over entry
+depth, stop width and time stop:
+
+| timeframe | cells above break-even | best |
+|---|---|---|
+| **5m** | **1 / 27** | PF 1.03 (t = +0.27) |
+| 15m | **24 / 27** | PF 1.48 (t = +2.09) |
+
+At 5m the edge and the cost are the same size and the result is a flat
+nothing. At 15m the same strategy clears it on a broad plateau -- 24 of 27
+cells, not one lucky cell -- and every instrument is independently positive:
+
+| SL 6 ATR / TP at mean / 24-bar stop, 15m | trades | PF | t |
+|---|---|---|---|
+| in-sample (best of 27) | 161 | 1.48 | +2.09 |
+| **held-out second half** | 93 | **1.22** | **+0.76** |
+| ETH / SOL / BTC | 57 / 45 / 59 | 1.69 / 1.24 / 1.49 | |
+
+It survives the assumptions that killed earlier results: only 1 trade in 161
+closes on its entry bar (the intrabar artifact that faked the SMC edge), no
+lookahead, and it stays positive at **taker fees on both sides**
+(+9,178 instead of +13,619) and at 3 ticks of slippage.
+
+**Why 15m works and 5m does not:** reversion grows with holding time while
+the fee is a fixed cost per round trip. Five minutes is too short to amortise
+4 bps; fifteen is not. That is the whole result, and it is a statement about
+cost structure, not about indicators.
+
+Verdict: **the most promising thing in this repo, and still not proven.**
+Held-out t = +0.76 is not significant, and 161 trades is one regime of one
+year. Trade it on paper first.
+
+### A live-trading bug this strategy exposed
+
+The first two strategies quote a *static* level (a cross-candle high, a POC).
+This one re-derives its quote every bar, and that exposed a real defect: the
+live trader left the old order resting instead of cancel/replacing it, so it
+traded a stale price the backtest never used -- 81 fills live against 57 in
+the backtest. `--compare` caught it. Any market-making strategy needs the
+cancel/replace path, and it is now there and tested.
+
 ### What this does and does not establish
 
 60 sessions is a small sample, one market regime, one asset class. This is
@@ -472,6 +556,7 @@ avoids. Treat synthetic runs as tests of the machinery, never of the idea.
 | `data.py` | CSV loading, session labelling, synthetic generator |
 | `structure.py` | swing pivots, CHoCH/BOS, fixed-range volume profile |
 | `smc.py` | CHoCH -> BOS -> POC retest strategy (`--strategy smc`) |
+| `scalp.py` | maker mean-reversion scalp with a fee floor (`--strategy scalp`) |
 | `cli.py` | `run`, `paper`, `sweep`, `walkforward`, `generate` |
 | `tools/fetch_yahoo.py` | pull real equity intraday bars into the CSV format |
 | `tools/fetch_okx.py` | pull OKX perpetual candles and contract specs |

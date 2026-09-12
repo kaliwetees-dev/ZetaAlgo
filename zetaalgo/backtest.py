@@ -150,6 +150,7 @@ class Backtester:
                             direction=plan.direction,
                             maker=plan.order_kind == "limit",
                             entry_kind=plan.order_kind,
+                            target_price=plan.target_price,
                         )
                         strategy.consume_setup()
                         if self.position is not None:
@@ -204,6 +205,7 @@ class Backtester:
         direction: int = 1,
         maker: bool = False,
         entry_kind: str = "stop",
+        target_price: Optional[float] = None,
     ) -> None:
         cfg = self.config
         scfg = self.strategy_config
@@ -232,7 +234,15 @@ class Backtester:
         # position_size is what bounds them.
         self.cash -= direction * qty * fill + fee
         risk = direction * (fill - stop)
-        target = fill + direction * scfg.target_r * risk if scfg.target_r > 0 else None
+        if target_price is not None:
+            # An absolute level supplied by the strategy: a better-than-asked
+            # fill widens the reward rather than shrinking it, which is what
+            # keeps a fee floor honest.
+            target = target_price
+        elif scfg.target_r > 0:
+            target = fill + direction * scfg.target_r * risk
+        else:
+            target = None
         self.position = Position(
             qty=qty,
             entry_price=fill,

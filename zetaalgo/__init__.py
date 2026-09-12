@@ -18,6 +18,7 @@ from .indicators import atr, ema, session_vwap, sma
 from .live import BrokerAdapter, LiveTrader, Order, PaperBroker, run_paper_session
 from .metrics import Metrics, compute_metrics
 from .reporting import format_report
+from .scalp import MeanReversionScalp, ScalpConfig
 from .smc import SmcConfig, SmcStrategy
 from .structure import StructureTracker, VolumeProfile, fixed_range_profile, swing_points
 from .strategy import EmaVwapCrossoverStrategy, EntryPlan, Setup
@@ -33,11 +34,13 @@ __all__ = [
     "EmaVwapCrossoverStrategy",
     "EntryPlan",
     "LiveTrader",
+    "MeanReversionScalp",
     "Metrics",
     "Order",
     "PaperBroker",
     "Position",
     "Setup",
+    "ScalpConfig",
     "SmcConfig",
     "SmcStrategy",
     "StrategyConfig",
