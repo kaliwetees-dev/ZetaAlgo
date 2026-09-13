@@ -132,6 +132,13 @@ def _add_scalp_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--no-trend-filter", action="store_true",
                        help="drop the lagging confirmation filter")
     group.add_argument("--max-adverse-slope-bps", type=float, default=4.0)
+    group.add_argument("--max-variance-ratio", type=float, default=0.0,
+                       help="refuse entries when the trailing variance ratio "
+                            "is at or above this (1.0 = random walk, below = "
+                            "mean reverting, above = trending). 0 disables. "
+                            "The one regime gate that held out of sample.")
+    group.add_argument("--vr-window", type=int, default=1920,
+                       help="trailing bars used to measure the variance ratio")
 
 
 def build_scalp_config(args: argparse.Namespace) -> ScalpConfig:
@@ -149,6 +156,8 @@ def build_scalp_config(args: argparse.Namespace) -> ScalpConfig:
         trend_period=args.trend_period,
         trend_filter=not args.no_trend_filter,
         max_adverse_slope_bps=args.max_adverse_slope_bps,
+        max_variance_ratio=args.max_variance_ratio,
+        vr_window=args.vr_window,
         tick_size=args.tick_size,
         fill_through_ticks=args.fill_through_ticks,
         entry_bar_stop=args.entry_bar_stop,

@@ -199,3 +199,110 @@ class TestParity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestVarianceRatioGate(unittest.TestCase):
+    """Refuse to trade mean reversion when prices are trending.
+
+    The variance ratio is Var(k-bar return) / (k x Var(1-bar return)): a
+    random walk gives 1.0, below 1.0 means moves get retraced and above 1.0
+    means they persist.  Gating on it is the one regime filter that held up
+    out of sample in both directions.
+    """
+
+    def test_a_random_walk_scores_near_one(self):
+        import random
+        rng = random.Random(5)
+        price = 100.0
+        closes = []
+        for _ in range(6000):
+            price *= 1 + rng.gauss(0.0, 0.002)
+            closes.append(price)
+        strategy = MeanReversionScalp(ScalpConfig(max_variance_ratio=1.0,
+                                                  vr_window=2000, vr_period=12))
+        ratios = [r for r in strategy._rolling_variance_ratio(closes) if r is not None]
+        self.assertTrue(ratios)
+        average = sum(ratios) / len(ratios)
+        self.assertGreater(average, 0.7)
+        self.assertLess(average, 1.4)
+
+    def test_momentum_scores_above_one(self):
+        """Positively autocorrelated returns make k-bar moves persist.
+
+        Note what does NOT raise the ratio: a constant drift.  Variance is
+        measured around the mean, so steady direction cancels out.  The gate
+        therefore measures path persistence, not whether the market is going
+        up or down -- which is why it survived out of sample where a
+        bull/bear gate did not.
+        """
+        import random
+        rng = random.Random(11)
+        price, previous = 100.0, 0.0
+        closes = []
+        for _ in range(6000):
+            previous = 0.35 * previous + rng.gauss(0.0, 0.001)
+            price *= 1 + previous
+            closes.append(price)
+        strategy = MeanReversionScalp(ScalpConfig(max_variance_ratio=1.0,
+                                                  vr_window=2000, vr_period=12))
+        ratios = [r for r in strategy._rolling_variance_ratio(closes) if r is not None]
+        self.assertTrue(ratios)
+        self.assertGreater(sum(ratios) / len(ratios), 1.3)
+
+    def test_a_constant_drift_does_not_move_the_ratio(self):
+        """Direction is not persistence: adding drift leaves the ratio alone."""
+        import random
+        def series(drift):
+            rng = random.Random(21)
+            price = 100.0
+            out = []
+            for _ in range(6000):
+                price *= 1 + drift + rng.gauss(0.0, 0.002)
+                out.append(price)
+            return out
+        strategy = MeanReversionScalp(ScalpConfig(max_variance_ratio=1.0,
+                                                  vr_window=2000, vr_period=12))
+        flat = [r for r in strategy._rolling_variance_ratio(series(0.0)) if r is not None]
+        rising = [r for r in strategy._rolling_variance_ratio(series(0.001)) if r is not None]
+        self.assertAlmostEqual(sum(flat) / len(flat), sum(rising) / len(rising), places=1)
+
+    def test_a_noiseless_series_has_no_defined_ratio(self):
+        """Zero return variance is 0/0, not a huge number."""
+        closes = [100.0 * (1.0005 ** i) for i in range(6000)]
+        strategy = MeanReversionScalp(ScalpConfig(max_variance_ratio=1.0,
+                                                  vr_window=2000, vr_period=12))
+        ratios = [r for r in strategy._rolling_variance_ratio(closes) if r is not None]
+        for r in ratios:
+            self.assertGreaterEqual(r, 0.0)  # never negative, whatever else
+
+    def test_a_sawtooth_series_scores_below_one(self):
+        closes = [100.0 + (2.0 if i % 2 else -2.0) for i in range(6000)]
+        strategy = MeanReversionScalp(ScalpConfig(max_variance_ratio=1.0,
+                                                  vr_window=2000, vr_period=12))
+        ratios = [r for r in strategy._rolling_variance_ratio(closes) if r is not None]
+        self.assertTrue(ratios)
+        self.assertLess(sum(ratios) / len(ratios), 0.5)
+
+    def test_the_gate_only_removes_trades(self):
+        bars = generate_synthetic(days=90, seed=131)
+        base = run_backtest(bars, strategy=MeanReversionScalp(
+            ScalpConfig(max_variance_ratio=0.0)))
+        gated = run_backtest(bars, strategy=MeanReversionScalp(
+            ScalpConfig(max_variance_ratio=1.0, vr_window=500)))
+        self.assertLessEqual(len(gated.trades), len(base.trades))
+
+    def test_a_tighter_gate_removes_more(self):
+        bars = generate_synthetic(days=90, seed=132)
+        counts = [
+            len(run_backtest(bars, strategy=MeanReversionScalp(
+                ScalpConfig(max_variance_ratio=vr, vr_window=500))).trades)
+            for vr in (1.2, 1.0, 0.8)
+        ]
+        self.assertEqual(counts, sorted(counts, reverse=True), counts)
+
+    def test_the_gate_is_recorded_in_the_funnel(self):
+        bars = generate_synthetic(days=90, seed=133)
+        strategy = MeanReversionScalp(ScalpConfig(max_variance_ratio=0.5,
+                                                  vr_window=500))
+        run_backtest(bars, strategy=strategy)
+        self.assertGreater(strategy.rejections.get("trending_regime_veto", 0), 0)

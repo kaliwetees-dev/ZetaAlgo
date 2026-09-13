@@ -83,6 +83,18 @@ class ScalpConfig:
     max_adverse_slope_bps: float = 4.0
     slope_lookback: int = 10
 
+    # --- regime gate ------------------------------------------------------
+    # The variance ratio measures whether prices are mean-reverting or
+    # trending: Var(k-bar return) / (k x Var(1-bar return)).  A random walk
+    # gives 1.0, below 1.0 means moves get retraced, above 1.0 means they
+    # persist.  A mean-reversion strategy has no business trading a trending
+    # tape, and this is the one filter that held up out of sample in both
+    # directions -- unlike a bull/bear market gate, which inverted.
+    # 0 disables the gate.
+    max_variance_ratio: float = 0.0
+    vr_window: int = 1920   # trailing bars used to measure it
+    vr_period: int = 12     # the k in the ratio
+
     # --- housekeeping -----------------------------------------------------
     trade_longs: bool = True
     trade_shorts: bool = True
@@ -138,6 +150,7 @@ class MeanReversionScalp:
         self.mean: List[Optional[float]] = []
         self.vol: List[Optional[float]] = []
         self.trend: List[Optional[float]] = []
+        self.variance_ratio: List[Optional[float]] = []
         self.rejections: Dict[str, int] = {}
         self._quote_age = 0
         self._last_side: Optional[int] = None
@@ -159,6 +172,8 @@ class MeanReversionScalp:
 
         self.vol = atr_series(highs, lows, closes, cfg.vol_period)
         self.trend = ema(closes, cfg.trend_period) if cfg.trend_filter else [None] * len(closes)
+        self.variance_ratio = (self._rolling_variance_ratio(closes)
+                               if cfg.max_variance_ratio > 0 else [None] * len(closes))
         self.rejections = {}
         self._quote_age = 0
         self._last_side = None
@@ -191,6 +206,48 @@ class MeanReversionScalp:
                 out.append(None)
             else:
                 out.append(pv / vol if vol > 0 else tp_sum / period)
+        return out
+
+    def _rolling_variance_ratio(self, closes: List[float]) -> List[Optional[float]]:
+        """Trailing variance ratio, computed in one pass.
+
+        Rolling sums of the 1-bar and k-bar returns give both variances in
+        O(n), which matters: the naive form is O(n x window) and unusable on
+        a multi-year series.
+        """
+        cfg = self.config
+        window, k = cfg.vr_window, cfg.vr_period
+        n = len(closes)
+        out: List[Optional[float]] = [None] * n
+        if n < window + k + 1:
+            return out
+        short = [0.0] * n
+        long_ = [0.0] * n
+        for i in range(1, n):
+            if closes[i - 1] > 0:
+                short[i] = (closes[i] - closes[i - 1]) / closes[i - 1]
+        for i in range(k, n):
+            if closes[i - k] > 0:
+                long_[i] = (closes[i] - closes[i - k]) / closes[i - k]
+        s1 = s2 = l1 = l2 = 0.0
+        for i in range(n):
+            s1 += short[i]; s2 += short[i] * short[i]
+            l1 += long_[i]; l2 += long_[i] * long_[i]
+            if i >= window:
+                j = i - window
+                s1 -= short[j]; s2 -= short[j] * short[j]
+                l1 -= long_[j]; l2 -= long_[j] * long_[j]
+            if i < window + k:
+                continue
+            # E[x^2] - E[x]^2 loses precision badly when the returns are
+            # nearly constant, and can go negative.  Clamp, then refuse to
+            # divide by a variance that is not meaningfully positive -- on a
+            # near-deterministic series the ratio is genuinely undefined
+            # rather than huge.
+            var_short = max(0.0, s2 / window - (s1 / window) ** 2)
+            var_long = max(0.0, l2 / window - (l1 / window) ** 2)
+            if var_short > 1e-18:
+                out[i] = var_long / (k * var_short)
         return out
 
     def _note(self, reason: str) -> None:
@@ -250,6 +307,11 @@ class MeanReversionScalp:
         if not self._trend_allows(prev, direction):
             self._note("trend_veto")
             return None
+        if cfg.max_variance_ratio > 0:
+            ratio = self.variance_ratio[prev]
+            if ratio is None or ratio >= cfg.max_variance_ratio:
+                self._note("trending_regime_veto")
+                return None
 
         band = mean - direction * cfg.entry_z * vol
         entry = self._round_to_tick(band, up=(direction == SHORT))

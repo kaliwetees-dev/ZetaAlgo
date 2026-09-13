@@ -899,6 +899,75 @@ That is not an edge anyone should fund, and it is also not quite nothing. The
 engine, the cost model, the fee-per-R diagnostic, the live/backtest parity
 check and the universe scan are the durable output.
 
+### Why the monthly results swing, and the one adjustment that survives
+
+Correlating each month's P&L against that month's market character, over the
+27 months of 2.2-year data:
+
+| measured over the month | correlation with that month's P&L |
+|---|---|
+| **variance ratio** | **−0.303** |
+| lag-1 autocorrelation | −0.157 |
+| bar range | +0.112 |
+| realised volatility | +0.071 |
+
+The variance ratio is `Var(k-bar return) / (k x Var(1-bar return))`: a random
+walk scores 1.0, below 1.0 means moves get retraced, above means they persist.
+It is the strongest relationship, and the only one with a mechanism behind it
+-- **a mean-reversion strategy loses when prices trend and wins when they
+revert.** Volatility barely matters, which retires the earlier "it needs
+volatility" reading.
+
+Split by that measure and the effect is stark:
+
+| trailing gate at entry | trades | PF | net $ | t |
+|---|---|---|---|---|
+| none | 1,999 | 1.04 | +22.75 | +0.69 |
+| **VR < 1.0** (reverting) | 1,393 | **1.20** | **+67.44** | **+2.49** |
+| VR ≥ 1.0 (trending) | 606 | **0.77** | **−44.69** | **−2.38** |
+
+### It holds out of sample, and the bull gate does not
+
+Every gate tested on one half and graded on the other, in both directions:
+
+| gate | first half | second half (held out) |
+|---|---|---|
+| none | PF 1.15 | PF 0.96 |
+| **VR < 1.0** | **1.22** | **1.09** |
+| **VR < 0.9** | **1.31** | **1.10** |
+| BTC 20d trend > +5% | 1.49 | **0.95** |
+| VR<1 AND BTC trend>0 | 1.49 | **0.98** |
+
+**This retracts the bull-regime recommendation made earlier in this README.**
+The BULL gate looked like the strongest result in the repo (PF 1.28, t=+2.34
+in sample) and it *inverts* out of sample. The variance-ratio gate is positive
+in both halves and in both directions of the split.
+
+The reason one survives and the other does not is visible in the arithmetic:
+variance is measured around the mean, so a constant drift cancels out. **The
+variance ratio measures path persistence, not direction.** A bull/bear gate is
+a bet on which way the market went in a particular sample; a persistence gate
+is a statement about whether the strategy's own mechanism is present.
+
+Implemented as `--max-variance-ratio`:
+
+| gate | trades | win% | PF | net $ | t |
+|---|---|---|---|---|---|
+| off | 2,060 | 55.8 | 1.06 | +33.85 | +1.01 |
+| VR < 1.1 | 1,837 | 55.9 | 1.08 | +40.19 | +1.29 |
+| **VR < 1.0** | 1,449 | 56.1 | **1.13** | **+48.71** | **+1.78** |
+| VR < 0.9 | 782 | 56.6 | 1.17 | +34.66 | +1.59 |
+| VR < 0.8 | 210 | 64.8 | 1.45 | +23.25 | +2.18 |
+
+Monotonic in the gate, which is what a real relationship looks like. It also
+fixes the worst months rather than just adding to the good ones: December 2025
+goes from **−24.71 to −3.77**, March 2025 from −12.94 to +0.54, and the worst
+month overall improves from −24.71 to −13.10. Total goes from +33.85 to
++48.71 on 30% fewer trades.
+
+It is still not significance (t = +1.78 on 1,449 trades), and it is still
+one asset class over 2.2 years.
+
 ### The conclusion a $100 account should draw
 
 The strategy does not scale badly -- the percentages hold. The problem is that
