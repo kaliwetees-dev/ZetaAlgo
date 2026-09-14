@@ -981,6 +981,125 @@ check that your maker fills, fees and slippage actually match the backtest.
 That question is worth a few dollars to answer, and it is the one thing no
 amount of further backtesting can settle.
 
+### Which leverage suits $100? (`tools/leverage_lab.py`)
+
+    python3 tools/leverage_lab.py --data-dir data_2y --bar 15m
+
+Five assets (BTC dropped -- it lost money over the same window), 15m, the
+final long-only maker config with the variance-ratio gate, 2024-07-25 to
+2026-09-12: **1,175 trades, 56.8% wins, PF 1.19, +10.55 bps per trade,
+t = +2.29.** Stop distances: median 2.34%, 95th percentile 5.64%, worst
+26.37%.
+
+The naive answer to "which leverage?" is always the exchange maximum, and it
+has to be. At a fixed stop distance, both return and drawdown are linear in
+position size, so every ratio between them is flat while the level of both
+keeps climbing. A return column, and a return-per-drawdown column with it,
+cannot select a leverage -- it can only rediscover the cap. So the tool runs
+three ladders instead.
+
+**A. Same $5 of margin, higher leverage.** This is the ladder people mean,
+and it is a position-size ladder wearing a leverage costume.
+
+| lev | position | final $ | return | maxDD | low $ | peak exposure | liq buffer | worst stress | cushion |
+|---|---|---|---|---|---|---|---|---|---|
+| 1x | $5 | 106.20 | +6.2% | 2.4% | 99.47 | $25 | 397% | 1% | 798x |
+| 2x | $10 | 112.39 | +12.4% | 4.6% | 98.94 | $50 | 197% | 2% | 398x |
+| 5x | $25 | 130.99 | +31.0% | 10.0% | 97.35 | $125 | 77% | 4% | 158x |
+| 10x | $50 | 161.97 | +62.0% | 16.6% | 94.70 | $250 | 37% | 8% | 78x |
+| 25x | $125 | 254.93 | +154.9% | 27.3% | 86.75 | $625 | 13.4% | 13% | 30x |
+| 50x | $250 | 409.86 | +309.9% | 34.9% | 73.49 | $1,250 | 5.4% | 23% | 14x |
+| 75x | $375 | 564.79 | +464.8% | 48.3% | 60.24 | $1,875 | 2.7% | 36% | 7.1x |
+| 100x | $500 | 719.72 | +619.7% | 61.5% | 46.98 | $2,500 | 1.4% | 50% | 3.7x |
+
+*Peak exposure* is the largest total position value open at once -- all five
+assets can be in a trade together. *Liq buffer* is the adverse move across
+that whole book that liquidates the account. *Worst stress* is the deepest
+summed unrealised loss the open book actually showed, as a share of the
+balance; *cushion* is what was left over the maintenance margin owed, where
+1.0x is liquidation.
+
+Nothing liquidated, but read the last three columns before reading the
+second. At 100x the five open positions are $2,500 of exposure on a $100
+balance, a 1.38% simultaneous adverse move ends the account, and the book
+did at one point carry an unrealised loss worth half the balance. These five
+assets are highly correlated; a 1.4% common move is an ordinary hour in
+crypto. The 3.7x cushion is the whole safety margin, measured on one
+2.2-year sample, with a stop distribution whose 95th percentile (5.64%) is
+already four times the buffer.
+
+**B. The same $250 position at every leverage.** Identical trades, identical
+P&L, +309.9% at 25x through 100x. The engine refuses the trade at 1x and 2x
+(the margin exceeds the balance) and starts skipping trades at 5x and 10x
+when margin is already committed elsewhere -- which is the only thing the
+leverage dial does:
+
+| lev | margin each | final $ | return | trades skipped | isolated liq | cross liq |
+|---|---|---|---|---|---|---|
+| 1x | $250.00 | 100.00 | +0.0% | 1,175 | 99.50% | -- |
+| 2x | $125.00 | 100.00 | +0.0% | 1,175 | 49.50% | -- |
+| 5x | $50.00 | 279.85 | +179.9% | 138 | 19.50% | 6.00% |
+| 10x | $25.00 | 392.66 | +292.7% | 9 | 9.50% | 5.48% |
+| 25x | $10.00 | 409.86 | +309.9% | 0 | 3.50% | 5.38% |
+| 50x | $5.00 | 409.86 | +309.9% | 0 | 1.50% | 5.38% |
+| 100x | $2.50 | 409.86 | +309.9% | 0 | 0.50% | 5.38% |
+
+The leverage *setting* changes the margin locked up and the distance to
+liquidation. It does not change the P&L of a position you were going to take
+anyway. Under **cross** margin the liquidation distance stops moving once
+there is enough margin to take every trade: the whole balance is collateral,
+so the buffer is set by exposure, not by the dial. Under **isolated** margin
+the dial is the buffer, and above 25x it is inside the 95th-percentile stop
+(5.64%) -- the position is liquidated before the stop it was given.
+
+**C. Fixed fraction of the balance as margin, compounded.** The only ladder
+with an interior optimum, because a drawdown shrinks the base that has to
+earn it back:
+
+| margin/trade | starting position | final $ | return | maxDD | low $ | CAGR | liquidated |
+|---|---|---|---|---|---|---|---|
+| 0.5% | $50 | 173.06 | +73.1% | 23.4% | 94.67 | +29.4% | no |
+| 1.0% | $100 | 258.59 | +158.6% | 43.1% | 89.30 | +56.2% | no |
+| 2.0% | $200 | 357.66 | +257.7% | 79.4% | 78.56 | +81.9% | no |
+| 3.0% | $300 | 233.08 | +133.1% | 95.8% | 60.90 | +48.8% | no |
+| 5.0% | $500 | 0.00 | -100.0% | 100% | 0.00 | -100% | **YES** |
+| 7.5% | $750 | 0.07 | -99.9% | 100% | 0.07 | -96.8% | **YES** |
+| 10%+ | $1,000+ | 0.00 | -100.0% | 100% | 0.00 | -100% | **YES** |
+
+The geometric optimum is 2% of the balance as margin -- and it comes with a
+79% drawdown, which no one holds through. Past 5% the account is gone, on a
+strategy with a positive expectancy: over-sizing kills a winning edge.
+
+Note that the 5% row and the 100x row of ladder A are the *same* position
+size at the start ($500 on $100). One survives and one does not, because
+compounding grew the exposure after the early gains and the later drawdown
+landed on a bigger book. Fixed sizing is what kept ladder A alive.
+
+**The answer.** Size first, then set leverage to make that size possible with
+room to spare:
+
+* **Position size ~$50 per asset** -- half the balance in notional, $250 of
+  exposure with all five open. That is ladder A's 10x row (+62% over 2.2
+  years, 16.6% drawdown, a 37% liquidation buffer, a 78x cushion) and
+  ladder C's 0.5% row (+73% compounded, 23.4% drawdown).
+* **Set the leverage to 10x.** A $50 position needs $5 of margin there. The
+  setting is not the risk control -- size is -- but it is a useful rail: it
+  caps what a mis-sized order can do, and it keeps the isolated liquidation
+  distance (9.5%) outside the 95th-percentile stop, so the same size stays
+  survivable if you ever switch margin modes.
+* **Do not go above 25x.** Past that, the isolated buffer is inside the
+  stop distribution and the cross buffer (5.4% and falling) is inside a
+  routine correlated move. The extra return is real in this sample and is
+  paid for with the account's existence in a worse one.
+* **100x is not a trade, it is a coin flip with better marketing.** +620%
+  on this sample, a 61.5% drawdown, and a 1.4% common move away from zero
+  at peak exposure.
+
+Every number above still rests on maker fills at the quoted price and
+excludes funding, and the edge is t = +2.29 on one asset class over 2.2
+years. The leverage choice does not make a marginal edge significant; it
+only decides how loudly the sample's luck is amplified.
+
 ### What this does and does not establish
 
 60 sessions is a small sample, one market regime, one asset class. This is
@@ -1025,6 +1144,8 @@ avoids. Treat synthetic runs as tests of the machinery, never of the idea.
 | `cli.py` | `run`, `paper`, `sweep`, `walkforward`, `generate` |
 | `tools/fetch_yahoo.py` | pull real equity intraday bars into the CSV format |
 | `tools/fetch_okx.py` | pull OKX perpetual candles and contract specs |
+| `tools/universe_scan.py` | run a strategy across many perps, report every result |
+| `tools/leverage_lab.py` | three leverage ladders on one $100 balance |
 
 ### Your own data
 
