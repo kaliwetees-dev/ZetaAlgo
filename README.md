@@ -1258,6 +1258,98 @@ three times the burden and eats almost all of it. The signal replicates; what
 decides tradeability is the cost structure of the instrument, which is the
 same conclusion the scalp reached from the other direction.
 
+### Breadth: 27 perpetuals, not three
+
+Three majors and gold is a narrow base for a claim about volume, so the same
+configuration was run across the whole OKX universe file — 30 instruments, of
+which 27 have enough history — with **nothing tuned per instrument except the
+tick size**. Crypto majors, alt-coins, memecoins, gold, crude oil and the
+equity-tracking perps, 15m bars, ~400 days (2025-08 → 2026-09), taker 5 bps
+per side:
+
+| spike >= | trades | win % | PF | gross R | fee in R | net R | t | instruments with net R > 0 |
+|---|---|---|---|---|---|---|---|---|
+| 3x | 11,968 | 24.1 | 0.86 | +0.010 | 0.100 | -0.090 | -7.19 | 6 / 27 |
+| 5x | 6,192 | 26.8 | 0.88 | +0.020 | 0.086 | -0.066 | -3.97 | 7 / 27 |
+| 8x | 2,946 | 31.0 | 1.00 | +0.081 | 0.074 | +0.008 | +0.32 | 12 / 27 |
+| 12x | 1,454 | 34.3 | 1.07 | +0.107 | 0.065 | +0.042 | +1.27 | 15 / 27 |
+| 20x | 611 | 36.5 | 1.15 | +0.139 | 0.056 | +0.083 | +1.63 | 19 / 27 |
+
+The gradient is the same shape on 27 instruments as on three, and the share of
+instruments that individually clear costs climbs with it. The fade reading
+fails just as broadly: -0.180R at 5x with **one** instrument of 27 positive.
+
+Two cautions come straight out of the same scan. The **effect is weaker here**
+(+0.042R at 12x against +0.129R for the three majors over 2.2 years), partly
+because this 400-day window is the recent, weaker period. And per-instrument
+results **do not persist**: the rank correlation between each instrument's
+first-half and second-half profit factor is +0.009, so picking the names that
+worked last period is not a strategy — breadth here is diversification only,
+exactly the conclusion the scalp reached.
+
+```bash
+python3 tools/fetch_okx.py $(python3 -c "import json;print(' '.join(r['instId'] for r in json.load(open('data/universe.json'))))") --bar 15m --days 400
+python3 tools/universe_scan.py --universe data/universe.json --strategy spike --spike-mult 12
+```
+
+### A different asset class: US equities
+
+Every instrument above is an OKX perpetual. US cash equities are a different
+venue, a different fee model, a different clientele and a real session — so
+the same rules were pointed at 10 liquid names on hourly bars (SPY, QQQ, AAPL,
+MSFT, NVDA, TSLA, AMZN, META, AMD, GOOGL; 5,081 bars each, 2023-10 → 2026-09;
+1 bp per side, which for equities is most of the cost):
+
+| spike >= | trades | win % | PF | gross R | fee in R | net R | t |
+|---|---|---|---|---|---|---|---|
+| 2x | 866 | 31.3 | 0.96 | +0.012 | 0.013 | -0.000 | -0.00 |
+| 3x | 429 | 35.2 | 1.01 | +0.011 | 0.009 | +0.001 | +0.02 |
+| 5x | 94 | 37.2 | 0.96 | -0.019 | 0.007 | -0.026 | -0.21 |
+| 8x | 21 | 42.9 | 1.08 | +0.036 | 0.005 | +0.030 | +0.12 |
+| 12x | 6 | 83.3 | 5.10 | +0.679 | 0.005 | +0.674 | +1.46 |
+
+**There is no gradient here**, and the only impressive row is six trades. What
+makes this interesting is that it is *not* a cost story: at 0.005-0.013R the
+equity fee is a tenth of the perp burden, so the strategy keeps essentially
+all of its gross edge — there just is not one to keep. The halves agree with
+that reading rather than with an edge: +0.090R in the first year (t = +0.95),
+-0.066R in the second. A 60-day 15m sample (SPY, QQQ, NVDA, TSLA, AAPL) is
+flat to negative too, on samples too small to add anything.
+
+It is also not the bar size. The same crypto perps show the gradient on
+**hourly** bars (BTC+ETH+SOL, 400 days: gross +0.036R at 5x, +0.319R at 8x),
+so an hour is not too coarse to contain the effect.
+
+One result does replicate across the asset classes: **fading a volume spike is
+worse than joining it** — -0.204R gross at 3x on equities against the
+breakout's +0.011R, the same sign and ordering as on every perp test.
+
+### What the equity data proves about the time-of-day baseline
+
+The synthetic test for `--spike-baseline time_of_day` is confirmed by real
+equity bars. Counting which bar of the session every detected spike falls on,
+across those 10 names at 3x:
+
+| baseline | spikes found | share in the session's first bar |
+|---|---|---|
+| `trailing` | 2,643 | **76 %** |
+| `time_of_day` | 904 | 14 % (even across all 7 slots) |
+
+A trailing baseline on a market with an opening bell is three-quarters a
+"trade the open" system. The time-of-day baseline removes that by
+construction.
+
+Perpetuals have the same seasonality in a weaker form — with a trailing
+baseline, 42% of BTC/ETH/SOL spikes land in the four hours from 12:00 UTC,
+against 14% for the time-of-day baseline — and yet the trailing baseline is
+the one that performs better there (+0.129R vs +0.052R at 12x). Splitting the
+trades by hour says why: at 8x, spikes entered between 12:00 and 20:00 UTC are
+worth +0.081R gross while every other hour is -0.088R (t = -2.32). US hours
+are where the edge is, so a baseline that over-selects them is picking up
+information, not noise. That is an observation from the same sample, not a
+tested rule — a time-of-day filter would need its own out-of-sample test
+before it is worth anything.
+
 ### The part that should stop you trading it
 
 Quarter by quarter, the 12x configuration on BTC+ETH+SOL:
@@ -1320,11 +1412,16 @@ all 76,799 bars and closes the same 133 trades at the same prices; the only
 difference it reports is the position still open on the last bar. That is the
 check that matters before any of this is believed.
 
-**Verdict: a real, measurable gross edge that is mostly paid to the exchange.**
-The dose-response is the strongest evidence of an actual signal anywhere in
-this repo, and it is still only worth ~0.13R net at a threshold that trades
-fourteen times a month, with a t of +1.95 over 2.2 years, carried by the short
-side, and negative in the two most recent quarters. Paper-trade it.
+**Verdict: a real, measurable gross edge on crypto perpetuals that is mostly
+paid to the exchange.** The dose-response is the strongest evidence of an
+actual signal anywhere in this repo — it holds on 27 instruments as well as on
+three, in both halves of the sample, and on gold and crude as well as on
+coins. What it does not do is generalise to US equities, where fees are a
+tenth as large and the gross edge is simply absent; survive selection, since
+which instrument works does not persist (rank correlation +0.009); or clear
+costs below roughly 10x, where it trades about fourteen times a month for
+~0.13R with a t of +1.95 over 2.2 years, carried by the short side, and
+negative in the two most recent quarters. Paper-trade it.
 
 ### What this strategy changed in the shared engine
 

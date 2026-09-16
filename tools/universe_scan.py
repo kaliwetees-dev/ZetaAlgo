@@ -40,6 +40,7 @@ from zetaalgo.backtest import run_backtest  # noqa: E402
 from zetaalgo.config import BacktestConfig  # noqa: E402
 from zetaalgo.data import load_csv  # noqa: E402
 from zetaalgo.scalp import MeanReversionScalp, ScalpConfig  # noqa: E402
+from zetaalgo.volume import VolumeSpikeConfig, VolumeSpikeStrategy  # noqa: E402
 
 MIN_BARS = 4000
 MAX_TICK_BPS = 4.0  # one tick this wide cannot support a ~12 bps target
@@ -71,11 +72,18 @@ def summarise(trades) -> Optional[dict]:
     n = len(trades)
     mean = net / n
     sd = math.sqrt(sum((t.net_pnl - mean) ** 2 for t in trades) / (n - 1)) if n > 1 else 0.0
+    # Net R: profit per dollar risked.  With fixed-notional sizing the dollar
+    # result depends on how wide each stop happened to be, so a strategy whose
+    # stop width varies (a volume spike's does, a lot) is only comparable
+    # across instruments in R.  The trade's own r_multiple is gross.
+    risks = [t.qty * abs(t.entry_price - t.initial_stop) for t in trades]
+    net_r = [t.net_pnl / r for t, r in zip(trades, risks) if r > 0]
     return {
         "n": n,
         "win": 100 * len(wins) / n,
         "pf": (sum(wins) / abs(sum(losses))) if losses else 99.0,
         "net": net,
+        "netR": sum(net_r) / len(net_r) if net_r else 0.0,
         "t": (mean / (sd / math.sqrt(n))) if sd else 0.0,
         "liq": sum(1 for t in trades if t.exit_reason == "liquidation"),
     }
@@ -111,12 +119,26 @@ def run_one(spec: dict, args: argparse.Namespace, half=None):
         sessions = sorted({b.session for b in bars})
         keep = set(half(sessions))
         bars = [b for b in bars if b.session in keep]
-    strategy = MeanReversionScalp(ScalpConfig(
+    return run_backtest(bars, backtest_config=build_config(spec, args),
+                        strategy=build_strategy(spec, args)), total
+
+
+def build_strategy(spec: dict, args: argparse.Namespace):
+    """The strategy object to scan the universe with.
+
+    Every instrument gets its own tick size and nothing else per-instrument:
+    a scan that tunes each name separately measures the tuning, not the idea.
+    """
+    if args.strategy == "spike":
+        return VolumeSpikeStrategy(VolumeSpikeConfig(
+            tick_size=spec["tickSz"], mode=args.spike_mode,
+            baseline=args.spike_baseline, spike_mult=args.spike_mult,
+            stop_mode=args.spike_stop, min_risk_bps=args.min_risk_bps,
+            target_r=args.target_r, max_bars_in_trade=args.spike_time_stop))
+    return MeanReversionScalp(ScalpConfig(
         tick_size=spec["tickSz"], trade_shorts=False, entry_z=args.entry_z,
         tp_fraction=1.0, stop_z=args.stop_z, time_stop_bars=args.time_stop,
         min_tp_bps=args.min_tp_bps))
-    return run_backtest(bars, backtest_config=build_config(spec, args),
-                        strategy=strategy), total
 
 
 def main() -> int:
@@ -136,13 +158,26 @@ def main() -> int:
     parser.add_argument("--stop-z", type=float, default=6.0)
     parser.add_argument("--time-stop", type=int, default=24)
     parser.add_argument("--min-tp-bps", type=float, default=8.0)
+    parser.add_argument("--strategy", choices=("scalp", "spike"), default="scalp",
+                        help="which rules to scan the universe with")
+    spike = parser.add_argument_group("volume spike (--strategy spike)")
+    spike.add_argument("--spike-mult", type=float, default=12.0)
+    spike.add_argument("--spike-mode", choices=("breakout", "fade"), default="breakout")
+    spike.add_argument("--spike-baseline", choices=("trailing", "time_of_day"),
+                       default="trailing")
+    spike.add_argument("--spike-stop", choices=("spike_bar", "midpoint", "atr"),
+                       default="spike_bar")
+    spike.add_argument("--spike-time-stop", type=int, default=48)
+    spike.add_argument("--target-r", type=float, default=3.0)
+    spike.add_argument("--min-risk-bps", type=float, default=0.0)
     args = parser.parse_args()
 
     with open(args.universe) as handle:
         universe = json.load(handle)
 
+    print(f"scanning {len(universe)} instruments with --strategy {args.strategy}")
     print(f"{'instrument':20s} {'tickbp':>7s} {'trades':>7s} {'win%':>6s} {'PF':>6s} "
-          f"{'net':>9s} {'t':>6s} {'liq':>4s} | {'H1 PF':>6s} {'H2 PF':>6s}")
+          f"{'netR':>7s} {'net':>9s} {'t':>6s} {'liq':>4s} | {'H1 PF':>6s} {'H2 PF':>6s}")
     usable, skipped = [], []
     for spec in universe:
         tick_bps = spec["tickSz"] / spec["last"] * 10_000 if spec.get("last") else 0.0
@@ -162,7 +197,8 @@ def main() -> int:
         flag = "  UNEXECUTABLE tick" if tick_bps >= MAX_TICK_BPS else ""
         blown = "  ACCOUNT TO ZERO" if full["net"] <= -0.95 * args.equity else ""
         print(f'{spec["instId"]:20s} {tick_bps:7.2f} {full["n"]:7d} {full["win"]:6.1f} '
-              f'{full["pf"]:6.2f} {full["net"]:+9.2f} {full["t"]:+6.2f} {full["liq"]:4d} | '
+              f'{full["pf"]:6.2f} {full["netR"]:+7.3f} {full["net"]:+9.2f} '
+              f'{full["t"]:+6.2f} {full["liq"]:4d} | '
               f'{h1["pf"] if h1 else 0:6.2f} {h2["pf"] if h2 else 0:6.2f}{flag}{blown}')
 
     for inst, why in skipped:
