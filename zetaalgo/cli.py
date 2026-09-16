@@ -14,6 +14,7 @@ import argparse
 import itertools
 import json
 import logging
+import os
 import sys
 from datetime import time
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -63,7 +64,9 @@ def _add_data_args(parser: argparse.ArgumentParser) -> None:
         "--session-start",
         help="HH:MM session boundary for markets that trade past midnight",
     )
-    group.add_argument("--symbol", default="SYNTHETIC", help="label used in reports")
+    group.add_argument("--symbol", default=None,
+                       help="label used in reports; defaults to the CSV's name, "
+                            "or SYNTHETIC when no --csv is given")
 
 
 def _add_smc_args(parser: argparse.ArgumentParser) -> None:
@@ -319,6 +322,26 @@ def build_strategy_config(args: argparse.Namespace) -> StrategyConfig:
     )
 
 
+STRATEGY_TITLES = {
+    "emavwap": "EMA9 x VWAP CROSSOVER",
+    "smc": "CHoCH -> BOS -> POC RETEST",
+    "scalp": "MAKER MEAN-REVERSION SCALP",
+}
+
+
+def report_label(args: argparse.Namespace) -> str:
+    """What to call the instrument in a report.
+
+    An explicit --symbol wins; otherwise the CSV's own name is a far better
+    label than the word SYNTHETIC, which had been printed over real data.
+    """
+    if getattr(args, "symbol", None):
+        return args.symbol
+    if getattr(args, "csv", None):
+        return os.path.splitext(os.path.basename(args.csv))[0].upper()
+    return "SYNTHETIC"
+
+
 def build_strategy(args: argparse.Namespace):
     """The strategy object the engine should run, or None for the default."""
     kind = getattr(args, "strategy", "emavwap")
@@ -398,12 +421,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     metrics = compute_metrics(result)
 
     if args.json:
-        payload = {"symbol": args.symbol, "metrics": metrics.as_dict(),
+        payload = {"symbol": report_label(args), "metrics": metrics.as_dict(),
                    "exit_reasons": result.exit_reasons,
                    "signal_counters": result.signal_counters}
         print(json.dumps(payload, indent=2, default=str))
     else:
-        title = f"EMA9 x VWAP CROSSOVER - {args.symbol}"
+        kind = getattr(args, "strategy", "emavwap")
+        title = f"{STRATEGY_TITLES.get(kind, kind.upper())} - {report_label(args)}"
         print(format_report(result, metrics, title=title, show_trades=args.show_trades))
         if args.csv is None:
             print(

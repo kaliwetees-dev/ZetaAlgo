@@ -1,3 +1,4 @@
+import argparse
 import io
 import json
 import os
@@ -5,7 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 
-from zetaalgo.cli import main, parse_grid
+from zetaalgo.cli import main, parse_grid, report_label
 
 
 def run_cli(*argv):
@@ -33,6 +34,30 @@ class TestGridParsing(unittest.TestCase):
     def test_a_malformed_term_is_rejected(self):
         with self.assertRaises(SystemExit):
             parse_grid("targetr")
+
+
+class TestReportLabel(unittest.TestCase):
+    """The report header must not call real data SYNTHETIC."""
+
+    def test_an_explicit_symbol_wins(self):
+        args = argparse.Namespace(symbol="ETHUSDT", csv="data/eth_usdt_swap_15m.csv")
+        self.assertEqual(report_label(args), "ETHUSDT")
+
+    def test_a_csv_labels_itself_by_filename(self):
+        args = argparse.Namespace(symbol=None, csv="data_2y/eth_usdt_swap_15m.csv")
+        self.assertEqual(report_label(args), "ETH_USDT_SWAP_15M")
+
+    def test_only_generated_data_is_called_synthetic(self):
+        self.assertEqual(report_label(argparse.Namespace(symbol=None, csv=None)),
+                         "SYNTHETIC")
+
+    def test_the_title_names_the_strategy_that_ran(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "gen.csv")
+            run_cli("generate", "--days", "8", "--out", path)
+            _, output = run_cli("run", "--csv", path, "--strategy", "scalp")
+            self.assertIn("MAKER MEAN-REVERSION SCALP - GEN", output)
+            self.assertNotIn("EMA9 x VWAP CROSSOVER", output)
 
 
 class TestCommands(unittest.TestCase):
