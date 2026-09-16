@@ -1287,6 +1287,56 @@ first-half and second-half profit factor is +0.009, so picking the names that
 worked last period is not a strategy — breadth here is diversification only,
 exactly the conclusion the scalp reached.
 
+Every instrument, not a selection (12x threshold, same 400-day window, risk
+sizing, net R = profit per dollar risked):
+
+| class | instrument | trades | PF | net R | t |
+|---|---|---|---|---|---|
+| major | XRP-USDT-SWAP | 46 | 1.33 | +0.204 | +1.03 |
+| major | SOL-USDT-SWAP | 52 | 1.23 | +0.103 | +0.62 |
+| major | BTC-USDT-SWAP | 84 | 1.13 | +0.066 | +0.48 |
+| major | ETH-USDT-SWAP | 94 | 1.10 | +0.060 | +0.46 |
+| major | BNB-USDT-SWAP | 77 | 0.69 | -0.161 | -1.21 |
+| alt | UNI-USDT-SWAP | 63 | 1.88 | +0.306 | +1.86 |
+| alt | ARB-USDT-SWAP | 59 | 1.60 | +0.275 | +1.49 |
+| alt | HYPE-USDT-SWAP | 18 | 1.56 | +0.237 | +0.71 |
+| alt | SUI-USDT-SWAP | 47 | 1.26 | +0.160 | +0.79 |
+| alt | LIT-USDT-SWAP | 22 | 1.24 | +0.089 | +0.36 |
+| alt | ZEC-USDT-SWAP | 23 | 0.87 | -0.048 | -0.26 |
+| alt | NEAR-USDT-SWAP | 37 | 0.85 | -0.053 | -0.26 |
+| alt | ENA-USDT-SWAP | 42 | 0.82 | -0.071 | -0.42 |
+| alt | RAY-USDT-SWAP | 73 | 0.79 | -0.103 | -0.67 |
+| alt | WLD-USDT-SWAP | 39 | 0.74 | -0.109 | -0.59 |
+| meme | PUMP-USDT-SWAP | 27 | 1.29 | +0.123 | +0.60 |
+| meme | TRUMP-USDT-SWAP | 73 | 1.08 | +0.077 | +0.44 |
+| meme | LAB-USDT-SWAP | 69 | 1.12 | +0.072 | +0.42 |
+| meme | BEAT-USDT-SWAP | 15 | 1.03 | +0.029 | +0.08 |
+| meme | USELESS-USDT-SWAP | 46 | 0.98 | -0.004 | -0.02 |
+| meme | DOGE-USDT-SWAP | 49 | 0.92 | -0.007 | -0.04 |
+| equity-perp | SOXL-USDT-SWAP | 60 | 2.12 | +0.336 | +2.03 |
+| equity-perp | SKHY-USDT-SWAP | 39 | 1.24 | +0.120 | +0.56 |
+| equity-perp | SNDK-USDT-SWAP | 116 | 0.93 | -0.018 | -0.18 |
+| equity-perp | SPCX-USDT-SWAP | 55 | 0.63 | -0.164 | -1.27 |
+| commodity | XAU-USDT-SWAP | 87 | 0.88 | -0.057 | -0.40 |
+| commodity | CL-USDT-SWAP | 42 | 0.72 | -0.156 | -0.85 |
+
+Pooled by class, the same threshold:
+
+| class | instruments | trades | net R | instruments positive |
+|---|---|---|---|---|
+| alt | 10 | 423 | +0.074 | 5 / 10 |
+| meme | 6 | 279 | +0.049 | 4 / 6 |
+| major | 5 | 353 | +0.039 | 4 / 5 |
+| equity-perp | 4 | 270 | +0.051 | 2 / 4 |
+| **commodity (XAU, CL)** | 2 | 129 | **-0.089** | **0 / 2** |
+
+Nothing here is individually significant — the largest t is +2.03 on one
+instrument out of 27, which is what chance produces. The classes are close
+enough to each other to read as one effect with noise around it, with the two
+commodity perps the only group that is consistently on the wrong side, and
+gold's narrow spike bars (42-62 bps) explain most of that: the same fee is
+three times the burden there.
+
 ```bash
 python3 tools/fetch_okx.py $(python3 -c "import json;print(' '.join(r['instId'] for r in json.load(open('data/universe.json'))))") --bar 15m --days 400
 python3 tools/universe_scan.py --universe data/universe.json --strategy spike --spike-mult 12
@@ -1315,6 +1365,19 @@ all of its gross edge — there just is not one to keep. The halves agree with
 that reading rather than with an edge: +0.090R in the first year (t = +0.95),
 -0.066R in the second. A 60-day 15m sample (SPY, QQQ, NVDA, TSLA, AAPL) is
 flat to negative too, on samples too small to add anything.
+
+Per name, so the scatter is visible rather than averaged away (3x threshold):
+
+| name | trades | PF | net R | t | | name | trades | PF | net R | t |
+|---|---|---|---|---|---|---|---|---|---|---|
+| AAPL | 44 | 2.29 | +0.386 | +2.03 | | NVDA | 56 | 0.80 | -0.096 | -0.57 |
+| TSLA | 43 | 1.62 | +0.289 | +1.39 | | AMZN | 40 | 0.76 | -0.121 | -0.57 |
+| GOOGL | 45 | 1.18 | +0.097 | +0.45 | | META | 52 | 0.79 | -0.146 | -0.63 |
+| QQQ | 33 | 0.92 | -0.017 | -0.09 | | MSFT | 38 | 0.58 | -0.195 | -1.10 |
+| AMD | 62 | 0.90 | -0.055 | -0.36 | | SPY | 16 | 0.68 | -0.245 | -0.81 |
+
+Four of ten positive, one of them at t = +2.03, which is what ten coin flips
+look like.
 
 It is also not the bar size. The same crypto perps show the gradient on
 **hourly** bars (BTC+ETH+SOL, 400 days: gross +0.036R at 5x, +0.319R at 8x),
