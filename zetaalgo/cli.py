@@ -24,6 +24,7 @@ from .data import Bar, generate_synthetic, load_csv, write_csv
 from .live import run_paper_session
 from .scalp import MeanReversionScalp, ScalpConfig
 from .smc import SmcConfig, SmcStrategy
+from .volume import VolumeSpikeConfig, VolumeSpikeStrategy
 from .metrics import compute_metrics
 from .reporting import (
     format_report,
@@ -31,6 +32,13 @@ from .reporting import (
     write_metrics_csv,
     write_trades_csv,
 )
+
+STRATEGY_TITLES = {
+    "emavwap": "EMA9 x VWAP CROSSOVER",
+    "smc": "CHoCH -> BOS -> POC RETEST",
+    "scalp": "MEAN-REVERSION SCALP",
+    "spike": "VOLUME SPIKE",
+}
 
 SWEEP_METRICS = {
     "profit_factor": lambda m: m.profit_factor,
@@ -166,15 +174,98 @@ def build_scalp_config(args: argparse.Namespace) -> ScalpConfig:
     )
 
 
+def _add_spike_args(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_argument_group("volume spike (--strategy spike)")
+    group.add_argument("--spike-mode", choices=("breakout", "fade"), default="breakout",
+                       help="breakout: trade WITH the spike bar.  fade: take the "
+                            "other side of a rejected extreme.")
+    group.add_argument("--spike-baseline", choices=("trailing", "time_of_day"),
+                       default="trailing",
+                       help="what the volume is unusual RELATIVE TO. trailing: "
+                            "median of the last --baseline-period bars. "
+                            "time_of_day: median of the same slot in previous "
+                            "sessions, which is the one that is not fooled by "
+                            "the opening bell.")
+    group.add_argument("--baseline-period", type=int, default=96,
+                       help="bars in the trailing volume baseline (96 x 15m = 1 day)")
+    group.add_argument("--baseline-sessions", type=int, default=20,
+                       help="sessions used by the time_of_day baseline")
+    group.add_argument("--spike-mult", type=float, default=3.0,
+                       help="volume must be this many times the baseline median")
+    group.add_argument("--min-body-ratio", type=float, default=0.5,
+                       help="breakout: |close-open|/range required of the spike bar")
+    group.add_argument("--max-body-ratio", type=float, default=0.35,
+                       help="fade: the spike bar must be mostly wick, not body")
+    group.add_argument("--min-range-atr", type=float, default=0.0,
+                       help="require the spike bar's range to be this many ATRs")
+    group.add_argument("--range-lookback", type=int, default=20,
+                       help="bars the spike bar must break out of")
+    group.add_argument("--no-range-break", action="store_true",
+                       help="accept a spike that did not extend the recent range")
+    group.add_argument("--spike-stop", choices=("spike_bar", "midpoint", "atr"),
+                       default="spike_bar",
+                       help="where the stop goes: the far side of the spike bar, "
+                            "its midpoint, or an ATR distance from the trigger")
+    group.add_argument("--min-risk-bps", type=float, default=0.0,
+                       help="THE FEE FLOOR: refuse a setup whose entry-to-stop "
+                            "distance is thinner than this. A taker round trip "
+                            "on OKX is 10 bps, so anything near that spends a "
+                            "whole R on fees.")
+    group.add_argument("--max-risk-atr", type=float, default=0.0,
+                       help="refuse a spike bar so large that its far side is an "
+                            "unaffordable stop (0 = off)")
+    group.add_argument("--spike-time-stop", type=int, default=12,
+                       help="abandon a spike trade that has not moved in N bars "
+                            "(0 = off): the event is over")
+    group.add_argument("--spike-trail", choices=("none", "atr"), default="none")
+    group.add_argument("--flat-session-end", action="store_true",
+                       help="flatten at the session close (off by default: a "
+                            "perpetual has no session)")
+
+
+def build_spike_config(args: argparse.Namespace) -> VolumeSpikeConfig:
+    return VolumeSpikeConfig(
+        trade_longs=not args.no_longs,
+        trade_shorts=not args.no_shorts,
+        mode=args.spike_mode,
+        baseline=args.spike_baseline,
+        baseline_period=args.baseline_period,
+        baseline_sessions=args.baseline_sessions,
+        spike_mult=args.spike_mult,
+        min_body_ratio=args.min_body_ratio,
+        max_body_ratio=args.max_body_ratio,
+        min_range_atr=args.min_range_atr,
+        require_range_break=not args.no_range_break,
+        range_lookback=args.range_lookback,
+        entry_window=args.entry_window,
+        entry_buffer_ticks=args.entry_buffer_ticks,
+        fill_through_ticks=args.fill_through_ticks,
+        tick_size=args.tick_size,
+        stop_mode=args.spike_stop,
+        stop_atr_mult=args.stop_atr_mult,
+        min_risk_bps=args.min_risk_bps,
+        max_risk_atr=args.max_risk_atr,
+        target_r=args.target_r,
+        breakeven_at_r=args.breakeven_r,
+        trail_mode=args.spike_trail,
+        max_bars_in_trade=args.spike_time_stop,
+        entry_bar_stop=args.entry_bar_stop,
+        flat_at_session_end=args.flat_session_end,
+        max_trades_per_session=args.max_trades_per_session,
+        cooldown_bars=args.cooldown_bars,
+    )
+
+
 def _add_strategy_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("strategy rules")
     group.add_argument(
         "--strategy",
-        choices=("emavwap", "smc", "scalp"),
+        choices=("emavwap", "smc", "scalp", "spike"),
         default="emavwap",
         help="emavwap: EMA9 x VWAP crossover.  smc: CHoCH -> BOS -> volume "
              "profile POC retest.  scalp: maker mean-reversion at a "
-             "volatility band, with a fee floor on the take-profit.",
+             "volatility band, with a fee floor on the take-profit.  spike: "
+             "break of a bar that traded several times the normal volume.",
     )
     group.add_argument(
         "--shorts",
@@ -326,6 +417,8 @@ def build_strategy(args: argparse.Namespace):
         return SmcStrategy(build_smc_config(args))
     if kind == "scalp":
         return MeanReversionScalp(build_scalp_config(args))
+    if kind == "spike":
+        return VolumeSpikeStrategy(build_spike_config(args))
     return None
 
 
@@ -403,7 +496,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                    "signal_counters": result.signal_counters}
         print(json.dumps(payload, indent=2, default=str))
     else:
-        title = f"EMA9 x VWAP CROSSOVER - {args.symbol}"
+        title = f"{STRATEGY_TITLES[getattr(args, 'strategy', 'emavwap')]} - {args.symbol}"
         print(format_report(result, metrics, title=title, show_trades=args.show_trades))
         if args.csv is None:
             print(
@@ -434,8 +527,12 @@ def cmd_paper(args: argparse.Namespace) -> int:
     scfg, bcfg = build_strategy_config(args), build_backtest_config(args)
     broker = run_paper_session(bars, scfg, bcfg, strategy=build_strategy(args))
 
-    buys = [f for f in broker.fills if f.side == "buy"]
-    print(f"\npaper run over {len(bars):,} bars: {len(buys)} entries, "
+    # Fills alternate open/close, so the entries are the even ones.  Counting
+    # buys instead would call every short's EXIT an entry, which silently
+    # miscounts any strategy that trades both ways.
+    entries = [f for i, f in enumerate(broker.fills) if i % 2 == 0]
+    still_open = 1 if broker.qty != 0 else 0
+    print(f"\npaper run over {len(bars):,} bars: {len(entries)} entries, "
           f"{len(broker.fills)} fills")
     print(f"final equity {broker.equity():,.2f} "
           f"(started {bcfg.initial_equity:,.2f}, flat at end: {broker.qty == 0})")
@@ -443,11 +540,19 @@ def cmd_paper(args: argparse.Namespace) -> int:
     if args.compare:
         result = run_backtest(bars, scfg, bcfg, strategy=build_strategy(args))
         gap = broker.equity() - result.final_equity
+        # A position still open on the last bar has no trade record yet: the
+        # backtest books a trade only when it closes.  Comparing that against
+        # the live fill count reports a divergence that is not one.
+        closed = len(entries) - still_open
         print(f"backtest equity {result.final_equity:,.2f} -> live/backtest gap {gap:+,.2f}")
-        print(f"trade count: paper {len(buys)} vs backtest {len(result.trades)}")
-        if abs(gap) > 0.01 or len(buys) != len(result.trades):
+        print(f"closed trades: paper {closed} vs backtest {len(result.trades)}"
+              + (" (1 position still open, excluded)" if still_open else ""))
+        if closed != len(result.trades) or (not still_open and abs(gap) > 0.01):
             print("WARNING: the automation diverges from the backtest; investigate "
                   "before trading it.")
+        elif still_open:
+            print("automation reproduces the backtest on every closed trade; the "
+                  "equity gap is the position still open at the end.")
         else:
             print("automation reproduces the backtest exactly.")
     return 0
@@ -598,6 +703,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_strategy_args(run)
     _add_smc_args(run)
     _add_scalp_args(run)
+    _add_spike_args(run)
     _add_account_args(run)
     run.add_argument("--trades-csv")
     run.add_argument("--equity-csv")
@@ -613,6 +719,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_strategy_args(paper)
     _add_smc_args(paper)
     _add_scalp_args(paper)
+    _add_spike_args(paper)
     _add_account_args(paper)
     paper.add_argument("--verbose", action="store_true", help="log every order and fill")
     paper.add_argument(
@@ -627,6 +734,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_strategy_args(sweep)
     _add_smc_args(sweep)
     _add_scalp_args(sweep)
+    _add_spike_args(sweep)
     _add_account_args(sweep)
     sweep.add_argument(
         "--grid",
@@ -643,6 +751,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_strategy_args(walk)
     _add_smc_args(walk)
     _add_scalp_args(walk)
+    _add_spike_args(walk)
     _add_account_args(walk)
     walk.add_argument("--grid", required=True)
     walk.add_argument("--folds", type=int, default=4)

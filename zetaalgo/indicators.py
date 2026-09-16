@@ -8,6 +8,7 @@ accidentally trade on a warm-up value.
 
 from __future__ import annotations
 
+import bisect
 from typing import List, Optional, Sequence
 
 Number = Optional[float]
@@ -46,6 +47,38 @@ def ema(values: Sequence[float], period: int) -> List[Number]:
     for i in range(period, len(values)):
         prev = (values[i] - prev) * alpha + prev
         out[i] = prev
+    return out
+
+
+def rolling_median(values: Sequence[float], period: int) -> List[Number]:
+    """Median of the trailing ``period`` samples, ``None`` until they exist.
+
+    A median rather than a mean because this is what a volume baseline has to
+    be: the mean of a volume window is dragged upwards by the very spikes the
+    baseline is supposed to measure against, so a market that spiked yesterday
+    quietly raises the bar for spiking today.  The median ignores them.
+
+    The window is maintained as a sorted list (insert and delete are O(period),
+    the lookup is O(1)), which keeps a multi-year series in the same running
+    time as the other indicators here.
+    """
+    if period <= 0:
+        raise ValueError("period must be positive")
+    out: List[Number] = []
+    window: List[float] = []
+    for i, value in enumerate(values):
+        bisect.insort(window, float(value))
+        if len(window) > period:
+            del window[bisect.bisect_left(window, float(values[i - period]))]
+        if len(window) < period:
+            out.append(None)
+            continue
+        middle = period // 2
+        out.append(
+            window[middle]
+            if period % 2
+            else (window[middle - 1] + window[middle]) / 2.0
+        )
     return out
 
 

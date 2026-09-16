@@ -15,11 +15,16 @@ def make_bars(
     pad: float = 0.05,
     start: Optional[datetime] = None,
     minutes: int = 5,
+    volumes: Optional[Sequence[float]] = None,
 ) -> List[Bar]:
     """Build bars from a close series.
 
     Each bar opens at the previous close and gets symmetric wicks, so the
     OHLC invariants hold and the range is predictable enough to assert on.
+
+    ``volumes`` overrides the flat ``volume`` per bar, which is what a
+    volume-driven strategy needs: a constant volume series has no spikes to
+    find.
     """
     out: List[Bar] = []
     ts = start or datetime(2024, 1, 2, 9, 30)
@@ -35,7 +40,7 @@ def make_bars(
                 high=round(high, 4),
                 low=round(low, 4),
                 close=round(close, 4),
-                volume=volume,
+                volume=volume if volumes is None else volumes[i],
                 session=session,
             )
         )

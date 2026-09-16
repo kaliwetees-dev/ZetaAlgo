@@ -83,6 +83,34 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("automation reproduces the backtest exactly", output)
 
+    def test_the_spike_strategy_is_selectable_and_titled(self):
+        code, output = run_cli("run", "--synthetic", "40", "--strategy", "spike",
+                               "--spike-mult", "2", "--symbol", "SPIKE")
+        self.assertEqual(code, 0)
+        self.assertIn("VOLUME SPIKE - SPIKE", output)
+        self.assertIn("volume spikes", output)  # the funnel names its own stage
+
+    def test_the_spike_report_names_the_baseline_it_used(self):
+        _, output = run_cli("run", "--synthetic", "30", "--strategy", "spike",
+                            "--spike-baseline", "time_of_day",
+                            "--baseline-sessions", "5")
+        self.assertIn("same slot in the last 5 sessions", output)
+
+    def test_spike_paper_compare_agrees_with_the_backtest(self):
+        code, output = run_cli("paper", "--synthetic", "30", "--strategy", "spike",
+                               "--spike-mult", "2", "--compare")
+        self.assertEqual(code, 0)
+        self.assertIn("automation reproduces the backtest", output)
+        self.assertNotIn("WARNING", output)
+
+    def test_each_strategy_reports_under_its_own_name(self):
+        for strategy, title in (("emavwap", "EMA9 x VWAP CROSSOVER"),
+                                ("smc", "CHoCH -> BOS -> POC RETEST"),
+                                ("scalp", "MEAN-REVERSION SCALP"),
+                                ("spike", "VOLUME SPIKE")):
+            _, output = run_cli("run", "--synthetic", "12", "--strategy", strategy)
+            self.assertIn(title, output)
+
     def test_sweep_ranks_every_combination(self):
         code, output = run_cli("sweep", "--synthetic", "25",
                                "--grid", "target_r=1.5,3", "--rank", "net_profit")

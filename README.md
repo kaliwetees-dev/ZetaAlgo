@@ -1126,11 +1126,227 @@ by construction, and a breakout strategy flatters itself on trending
 synthetic data — which is exactly the trap the real-data section above
 avoids. Treat synthetic runs as tests of the machinery, never of the idea.
 
+## Fourth strategy: volume spike (`--strategy spike`)
+
+"Trade a sudden spike in volume" is the most common automation request there
+is, and it is not yet a strategy: volume is unsigned, so a spike says
+*something happened* without saying which way to lean, and "sudden" means
+nothing until you say sudden *compared to what*. `volume.py` makes all three
+missing decisions explicit.
+
+**What counts as a spike.** The bar's volume against a rolling **median** of
+recent volume. A median, not a mean, because a mean is dragged upwards by the
+spikes themselves: one stampede yesterday quietly raises the bar for today. The
+baseline also excludes the bar it is judging, or a big enough spike lifts its
+own threshold and partly hides.
+
+**Which way to lean.** Two readings, both implemented, because the honest
+answer to "which one is right?" is a backtest:
+
+* `--spike-mode breakout` — the spike bar closed decisively (`--min-body-ratio`)
+  and took out the recent range (`--range-lookback`). Enter on a **break of
+  that bar's extreme**, stop at its far side.
+* `--spike-mode fade` — the spike bar reached a new extreme and closed back
+  inside itself, the shape of a climax. Enter on a break of the **opposite**
+  extreme, so the reversal has to be confirmed by price leaving the bar the
+  other way rather than by an opinion about the wick.
+
+**What "usual volume" means when volume has a time of day.** On any market with
+a session, the open and the close trade multiples of midday volume, so a
+trailing baseline fires on almost every open: the strategy becomes "buy the
+open" wearing a volume costume. `--spike-baseline time_of_day` compares each
+bar with the **same slot in previous sessions** instead. The test suite pins
+this down with a synthetic market where every session is identical and the
+first bar always trades 8x the rest: the trailing baseline finds a "spike"
+almost every day, the time-of-day baseline finds none, and both find the one
+bar that is genuinely unusual.
+
+### Why this shape survives the equation that killed the others
+
+Everything else here ran into `fee_in_R = 2 x fee_rate / stop_percent`. A
+volume-spike stop is not a choice in the same way: the signal bar is by
+construction an **expansion** bar, so its far side is a long way off in
+percentage terms, and the same fee is a much smaller fraction of R. Measured
+on OKX 15m perps, taker both sides:
+
+| stop distance (median) | fee in R |
+|---|---|
+| 5m scalp, ~10 bps | ~1.0 (fatal) |
+| spike bar at 3x volume, 95 bps | 0.13 |
+| spike bar at 12x volume, 167 bps | 0.07 |
+| spike bar at 20x volume, 237 bps | 0.06 |
+
+`--min-risk-bps` turns that into a gate rather than a hope: a setup whose stop
+is too tight to carry the round trip is refused outright, the mirror of the
+scalp's `--min-tp-bps`.
+
+### Does it work? BTC + ETH + SOL, 15m, 2.2 years
+
+76,799 bars per instrument (2024-07-08 → 2026-09-16), OKX taker 5 bps per
+side, 1 tick slippage, 1% of equity risked per trade, both directions, target
+3R, 48-bar time stop. **Net R** below is `net_pnl / dollar risk` — the R
+multiple in the trade record is gross, and here the fee is the whole story:
+
+| spike >= | trades | win % | PF | gross R | fee in R | **net R** | t |
+|---|---|---|---|---|---|---|---|
+| 1.5x | 5,967 | 22.1 | 0.76 | +0.013 | 0.164 | **-0.151** | -8.40 |
+| 2x | 5,044 | 23.0 | 0.80 | +0.022 | 0.149 | **-0.127** | -6.54 |
+| 3x | 3,594 | 24.2 | 0.83 | +0.017 | 0.127 | **-0.110** | -4.93 |
+| 5x | 1,897 | 28.9 | 0.93 | +0.064 | 0.103 | **-0.039** | -1.30 |
+| 8x | 872 | 32.8 | 0.97 | +0.079 | 0.086 | **-0.006** | -0.15 |
+| 12x | 361 | 42.4 | 1.28 | +0.200 | 0.071 | **+0.129** | +1.95 |
+| 20x | 97 | 48.5 | 1.67 | +0.293 | 0.058 | **+0.235** | +1.94 |
+
+This is the most interesting table in the repo, for a reason that has nothing
+to do with the last two rows: the gross edge and the win rate rise
+**monotonically with how unusual the volume is**, from +0.013R at 1.5x to
++0.293R at 20x. That is a dose-response, not a lucky cell — no parameter was
+selected to produce it, and the ordering is the same in both halves of the
+sample:
+
+| spike >= | first half net R (t) | second half net R (t) |
+|---|---|---|
+| 2x | -0.129 (-4.76) | -0.127 (-4.57) |
+| 5x | +0.001 (+0.02) | -0.083 (-2.04) |
+| 8x | +0.072 (+1.03) | -0.083 (-1.48) |
+| 12x | +0.195 (+1.77) | +0.072 (+0.88) |
+| 20x | +0.593 (+2.65) | +0.111 (+0.78) |
+
+The direction survives out of sample; the **magnitude halves**. And the whole
+thing only becomes tradeable above roughly 10x, where there are 361 trades in
+2.2 years across three instruments — about fourteen a month.
+
+**The fade is dead.** At every multiple tested, fading the climax loses gross,
+before costs: -0.008R at 12x, and -0.05 to -0.07R at 2-5x, against the
+breakout's positive gross everywhere. Whatever a volume spike is, in this
+sample it is continuation, not exhaustion.
+
+### What does not change the answer
+
+Everything below is the 12x breakout configuration, full sample:
+
+| variation | trades | net R | t |
+|---|---|---|---|
+| baseline | 361 | +0.129 | +1.95 |
+| 3 ticks of slippage instead of 1 | 361 | +0.122 | +1.86 |
+| pessimistic entry-bar stop (`--entry-bar-stop low`) | 361 | +0.124 | +1.88 |
+| no range-break gate | 378 | +0.117 | +1.82 |
+| BTC only / ETH only / SOL only | 145 / 133 / 83 | +0.108 / +0.204 / +0.045 | +1.01 / +1.84 / +0.35 |
+| longs only | 165 | +0.034 | +0.38 |
+| **shorts only** | 196 | **+0.209** | **+2.17** |
+
+It is insensitive to the execution assumptions that faked earlier results in
+this repo — the intrabar-path policy moves it by 0.005R — and all three
+instruments are independently positive. But it is **carried by the short
+side**, which is one asymmetry in one 2.2-year crypto sample and not a
+property anyone should assume persists.
+
+### A fourth market the parameters were never chosen on
+
+XAU-USDT-SWAP, 15m, 50,361 bars (2025-04-09 → 2026-09-16), same settings:
+
+| spike >= | trades | gross R | fee in R | net R | median stop |
+|---|---|---|---|---|---|
+| 5x | 418 | +0.149 | 0.302 | -0.153 | 42 bps |
+| 8x | 215 | +0.234 | 0.254 | -0.020 | 52 bps |
+| 12x | 105 | +0.259 | 0.219 | +0.040 | 54 bps |
+| 20x | 55 | +0.338 | 0.216 | +0.122 | 62 bps |
+
+The same gradient appears in a completely different asset — and gold's spike
+bars are *narrow*, 42-62 bps against crypto's 77-237, so the identical fee is
+three times the burden and eats almost all of it. The signal replicates; what
+decides tradeability is the cost structure of the instrument, which is the
+same conclusion the scalp reached from the other direction.
+
+### The part that should stop you trading it
+
+Quarter by quarter, the 12x configuration on BTC+ETH+SOL:
+
+| quarter | trades | PF | net R |
+|---|---|---|---|
+| 2024 Q3 | 36 | 0.59 | -0.264 |
+| 2024 Q4 | 20 | 1.87 | +0.365 |
+| 2025 Q1 | 30 | 4.05 | +0.662 |
+| 2025 Q2 | 31 | 1.45 | +0.144 |
+| 2025 Q3 | 31 | 2.83 | +0.437 |
+| 2025 Q4 | 62 | 0.96 | -0.004 |
+| 2026 Q1 | 57 | 1.96 | +0.368 |
+| 2026 Q2 | 42 | 0.75 | -0.099 |
+| 2026 Q3 | 52 | 0.77 | -0.111 |
+
+Five of nine quarters positive, and **the two most recent are not**. Narrowing
+to that recent window makes it worse: over 2026-02-28 → 2026-09-16 on BTC+ETH
+the 15m gross edge is gone entirely (-0.002R at 12x), while the same window on
+**5m** bars still shows a positive gross edge (+0.082R at 12x) that a fee of
+0.156R buries. Both statements are one short window, and neither is a reason
+to switch timeframes; together they are a reason not to size this on the
+strength of the 2.2-year average.
+
+The time-of-day baseline, incidentally, did **not** help on perpetuals
+(+0.052R, t = +0.76, against +0.129R for the trailing one at 12x), which is
+what you would expect: a 24/7 market has a much weaker session shape to
+correct for, and insisting on it throws information away. Keep it for
+instruments that actually open and close.
+
+### Running it
+
+```bash
+python3 tools/fetch_okx.py BTC-USDT-SWAP ETH-USDT-SWAP SOL-USDT-SWAP --bar 15m --days 800
+
+python3 -m zetaalgo run --csv data/eth_usdt_swap_15m.csv --strategy spike \
+    --spike-mult 12 --spike-time-stop 48 --target-r 3 \
+    --tick-size 0.01 --lot-size 0.01 --min-qty 0.001 \
+    --commission-bps 5 --margin --leverage 10 --max-notional 5 \
+    --symbol ETH-USDT-SWAP
+```
+
+which reports 133 trades, 45.9% wins, PF 1.43, +28.8% over the 2.2 years with
+a 10.0% maximum drawdown, and a signal funnel showing where the other 285
+spikes went:
+
+```
+  volume spikes                     418
+  armed                             247    59.1 %
+  orders placed                     199    47.6 %
+  discarded: body_too_small         154    36.8 %
+  discarded: no_break_in_window     109    26.1 %
+  discarded: baseline_not_ready      96    23.0 %
+  discarded: no_range_break          17     4.1 %
+  entries taken                     133    31.8 %
+```
+
+`paper --compare` runs the same rules through the order-and-broker path over
+all 76,799 bars and closes the same 133 trades at the same prices; the only
+difference it reports is the position still open on the last bar. That is the
+check that matters before any of this is believed.
+
+**Verdict: a real, measurable gross edge that is mostly paid to the exchange.**
+The dose-response is the strongest evidence of an actual signal anywhere in
+this repo, and it is still only worth ~0.13R net at a threshold that trades
+fourteen times a month, with a t of +1.95 over 2.2 years, carried by the short
+side, and negative in the two most recent quarters. Paper-trade it.
+
+### What this strategy changed in the shared engine
+
+Three defects it exposed, all fixed and tested:
+
+* **The live trader ignored how much history a strategy needs.** It kept a
+  fixed 800-bar window; a volume baseline measured over a day of bars — or,
+  worse, over twenty *sessions* — silently computed something different live
+  from what the backtest computed. `LiveTrader` now honours `required_history`
+  and `required_sessions` when a strategy declares them.
+* **`paper --compare` counted a short's exit as an entry** (it counted buy
+  fills), and reported a position still open on the last bar as a divergence.
+  Both made a correct automation look broken on any two-sided strategy.
+* **The report was written for one strategy.** Every run was titled "EMA9 x
+  VWAP CROSSOVER" and the signal funnel labelled every counter a discard,
+  including the stages that are survivors.
+
 ## Layout
 
 | file | role |
 |---|---|
-| `indicators.py` | EMA, session-anchored VWAP, ATR, cross detection |
+| `indicators.py` | EMA, session-anchored VWAP, ATR, rolling median, cross detection |
 | `strategy.py` | the four rules as a bar-by-bar state machine |
 | `backtest.py` | event-driven engine, fills and exit priority |
 | `broker.py` | position sizing, commission, trade records |
@@ -1141,6 +1357,7 @@ avoids. Treat synthetic runs as tests of the machinery, never of the idea.
 | `structure.py` | swing pivots, CHoCH/BOS, fixed-range volume profile |
 | `smc.py` | CHoCH -> BOS -> POC retest strategy (`--strategy smc`) |
 | `scalp.py` | maker mean-reversion scalp with a fee floor (`--strategy scalp`) |
+| `volume.py` | volume-spike breakout/fade with a fee floor (`--strategy spike`) |
 | `cli.py` | `run`, `paper`, `sweep`, `walkforward`, `generate` |
 | `tools/fetch_yahoo.py` | pull real equity intraday bars into the CSV format |
 | `tools/fetch_okx.py` | pull OKX perpetual candles and contract specs |

@@ -87,6 +87,31 @@ def format_report(
             f"enabled {scfg.trend_filter}",
             "",
         ]
+    elif scfg is not None and hasattr(scfg, "spike_mult"):
+        baseline = (f"trailing median of {scfg.baseline_period} bars"
+                    if scfg.baseline == "trailing"
+                    else f"same slot in the last {scfg.baseline_sessions} sessions")
+        shape = (f"body >= {scfg.min_body_ratio:g} of range"
+                 if scfg.mode == "breakout"
+                 else f"body <= {scfg.max_body_ratio:g} of range (rejection)")
+        lines += [
+            "--- SETUP RULES " + "-" * (width - 16),
+            f"  Spike       volume >= {scfg.spike_mult:g}x the {baseline}",
+            f"  Shape       {scfg.mode}: {shape}"
+            + (f", breaking {scfg.range_lookback} bars" if scfg.require_range_break
+               else ", range break not required"),
+            f"  Entry       resting STOP through the spike bar, within "
+            f"{scfg.entry_window} bar(s)",
+            f"  Stop        {scfg.stop_mode} (ATR x {scfg.stop_atr_mult:g}), "
+            f"target {scfg.target_r:g}R, breakeven at {scfg.breakeven_at_r:g}R",
+            f"  FEE FLOOR   refuse any stop distance under "
+            f"{scfg.min_risk_bps:g} bps",
+            f"  Exits       time stop {scfg.max_bars_in_trade} bars, "
+            f"trail '{scfg.trail_mode}', flat at session end "
+            f"{scfg.flat_at_session_end}",
+            f"  Direction   longs {scfg.trade_longs}, shorts {scfg.trade_shorts}",
+            "",
+        ]
     elif scfg is not None and not hasattr(scfg, "ema_period"):
         # CHoCH/BOS/POC configuration.
         lines += [
@@ -201,8 +226,24 @@ def format_report(
     if result.signal_counters:
         lines += ["", "--- SIGNAL FUNNEL " + "-" * (width - 18)]
         counters = dict(result.signal_counters)
-        crosses = counters.pop("crosses_detected", 0)
-        rows = [["  bullish EMA/VWAP crosses", f"{crosses:>6,}", ""]]
+        # Each strategy names its own first stage; everything the strategy
+        # counts after that is a discard, and calling a stage a discard (or the
+        # reverse) misreads the funnel entirely.
+        stages = ("crosses_detected", "spikes_detected", "quoted")
+        first = next((name for name in stages if name in counters), None)
+        labels = {
+            "crosses_detected": "  bullish EMA/VWAP crosses",
+            "spikes_detected": "  volume spikes",
+            "quoted": "  quotes rested",
+        }
+        crosses = counters.pop(first, 0) if first else 0
+        rows = [[labels.get(first, "  signals"), f"{crosses:>6,}", ""]]
+        # Later stages of the same funnel are survivors, not discards.
+        for stage in ("armed", "orders_placed"):
+            count = counters.pop(stage, None)
+            if count is not None:
+                share = f"{100.0 * count / crosses:>6.1f} %" if crosses else ""
+                rows.append([f"  {stage.replace('_', ' ')}", f"{count:>6,}", share])
         for reason, count in sorted(counters.items(), key=lambda kv: -kv[1]):
             share = f"{100.0 * count / crosses:>6.1f} %" if crosses else ""
             rows.append([f"  discarded: {reason}", f"{count:>6,}", share])

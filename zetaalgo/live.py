@@ -356,7 +356,11 @@ class LiveTrader:
             self.strategy_config = strategy_config or StrategyConfig()
             self.strategy = EmaVwapCrossoverStrategy(self.strategy_config)
         self.config = backtest_config or BacktestConfig()
-        self.window = window
+        # A strategy may need more history than the default window holds (a
+        # volume baseline measured over a day of bars, say).  Honouring what it
+        # asks for is what keeps the live state identical to the backtest's.
+        self.window = max(window, self._required_history())
+        self.session_starts: List[int] = []
         self.bars: List[Bar] = []
         self.entry_order_id: Optional[str] = None
         self.entry_index: Optional[int] = None
@@ -390,9 +394,15 @@ class LiveTrader:
     def warm_up(self, bars: Sequence[Bar]) -> None:
         """Seed history with past bars without trading them."""
         self.bars = list(bars)[-self.window :]
+        self.session_starts = [
+            i for i, bar in enumerate(self.bars)
+            if i == 0 or self.bars[i - 1].session != bar.session
+        ]
 
     def on_bar(self, bar: Bar, last_of_session: bool = False) -> List[Order]:
         """Process one **closed** bar; returns the orders submitted."""
+        if not self.bars or self.bars[-1].session != bar.session:
+            self.session_starts.append(len(self.bars))
         self.bars.append(bar)
         self._trim_window()
         self.bars_seen += 1
@@ -511,6 +521,10 @@ class LiveTrader:
         self.breakeven_done = False
 
     # ------------------------------------------------------------------
+    def _required_history(self) -> int:
+        """Bars of history this strategy says it needs (0 when it does not say)."""
+        return int(getattr(self.strategy_config, "required_history", 0) or 0)
+
     def _trim_window(self) -> None:
         """Keep the window bounded but never cut into the current session."""
         if len(self.bars) <= self.window:
@@ -521,7 +535,19 @@ class LiveTrader:
         # the VWAP is anchored to its first bar.
         while cutoff > 0 and self.bars[cutoff].session == current_session:
             cutoff -= 1
+        # A strategy whose history is measured in SESSIONS (a volume baseline
+        # taken from the same slot on previous days) cannot have that
+        # expressed as a bar count, so it is honoured here instead.
+        required_sessions = int(
+            getattr(self.strategy_config, "required_sessions", 0) or 0
+        )
+        if required_sessions > 0:
+            cutoff = (min(cutoff, self.session_starts[-required_sessions])
+                      if len(self.session_starts) >= required_sessions else 0)
+        if cutoff <= 0:
+            return
         self.bars = self.bars[cutoff:]
+        self.session_starts = [s - cutoff for s in self.session_starts if s >= cutoff]
 
     def _rebuild_state(self, index: int) -> None:
         self.strategy.prepare(self.bars)
@@ -602,7 +628,9 @@ class LiveTrader:
             stop_loss=plan.stop_price,
             take_profit=absolute_tp,
             target_r=target_r,
-            reason=f"ema9xvwap breakout of bar {plan.cross_index}",
+            # The strategy's own name, so a log line says which rules put the
+            # order there -- there is more than one set of them now.
+            reason=f"{type(self.strategy).__name__} signal at bar {plan.cross_index}",
             ts=bar.ts,
         )
 
