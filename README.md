@@ -1416,7 +1416,8 @@ negative.
 Every instrument above is an OKX perpetual. US cash equities are a different
 venue, a different fee model, a different clientele and a real session — so
 the same rules were pointed at 10 liquid names on hourly bars (SPY, QQQ, AAPL,
-MSFT, NVDA, TSLA, AMZN, META, AMD, GOOGL; 5,081 bars each, 2023-10 → 2026-09;
+MSFT, NVDA, TSLA, AMZN, META, AMD, GOOGL; 5,081 bars each = 730 sessions,
+2023-10-17 → 2026-09-15, 2.9 calendar years;
 1 bp per side, which for equities is most of the cost):
 
 | spike >= | trades | win % | PF | gross R | fee in R | net R | t |
@@ -1431,7 +1432,7 @@ MSFT, NVDA, TSLA, AMZN, META, AMD, GOOGL; 5,081 bars each, 2023-10 → 2026-09;
 makes this interesting is that it is *not* a cost story: at 0.005-0.013R the
 equity fee is a tenth of the perp burden, so the strategy keeps essentially
 all of its gross edge — there just is not one to keep. The halves agree with
-that reading rather than with an edge: +0.090R in the first year (t = +0.95),
+that reading rather than with an edge: +0.090R in the first half (t = +0.95),
 -0.066R in the second. A 60-day 15m sample (SPY, QQQ, NVDA, TSLA, AAPL) is
 flat to negative too, on samples too small to add anything.
 
