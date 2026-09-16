@@ -1342,6 +1342,75 @@ python3 tools/fetch_okx.py $(python3 -c "import json;print(' '.join(r['instId'] 
 python3 tools/universe_scan.py --universe data/universe.json --strategy spike --spike-mult 12
 ```
 
+### What $100 per instrument would have done
+
+Net R says how good the signal is; it does not say what an account does. So:
+a separate **$100 account per instrument**, risking 1% of its own equity per
+trade, cross margin at 10x, taker fees both sides, over whatever history that
+instrument has (the windows differ — read the `days` column before comparing
+returns). Every instrument, sorted by result:
+
+| instrument | days | trades | final | profit | return | max DD | signals too small to trade |
+|---|---|---|---|---|---|---|---|
+| SOXL-USDT-SWAP | 119 | 60 | $121.22 | +$21.22 | +21.2 % | 3.9 % | 0 |
+| UNI-USDT-SWAP | 399 | 63 | $117.83 | +$17.83 | +17.8 % | 5.5 % | 0 |
+| ARB-USDT-SWAP | 399 | 59 | $115.46 | +$15.46 | +15.5 % | 9.2 % | 0 |
+| XRP-USDT-SWAP | 399 | 46 | $107.42 | +$7.42 | +7.4 % | 5.5 % | 0 |
+| SUI-USDT-SWAP | 399 | 47 | $105.62 | +$5.62 | +5.6 % | 6.6 % | 0 |
+| SOL-USDT-SWAP | 399 | 52 | $104.74 | +$4.74 | +4.7 % | 7.7 % | 0 |
+| BTC-USDT-SWAP | 399 | 84 | $104.55 | +$4.55 | +4.6 % | 9.8 % | 0 |
+| SKHY-USDT-SWAP | 67 | 39 | $104.29 | +$4.29 | +4.3 % | 6.9 % | 0 |
+| LAB-USDT-SWAP | 318 | 69 | $104.08 | +$4.08 | +4.1 % | 7.2 % | 0 |
+| HYPE-USDT-SWAP | 399 | 18 | $103.92 | +$3.92 | +3.9 % | 2.6 % | 0 |
+| ETH-USDT-SWAP | 399 | 94 | $103.74 | +$3.74 | +3.7 % | 9.8 % | 0 |
+| TRUMP-USDT-SWAP | 399 | 73 | $103.42 | +$3.42 | +3.4 % | 16.8 % | 0 |
+| PUMP-USDT-SWAP | 399 | 27 | $101.79 | +$1.79 | +1.8 % | 4.7 % | 0 |
+| LIT-USDT-SWAP | 265 | 22 | $101.79 | +$1.79 | +1.8 % | 5.5 % | 0 |
+| USELESS-USDT-SWAP | 399 | 46 | $99.66 | -$0.34 | -0.3 % | 10.6 % | 0 |
+| BEAT-USDT-SWAP | 307 | 14 | $99.43 | -$0.57 | -0.6 % | 6.4 % | 1 |
+| ZEC-USDT-SWAP | 313 | 23 | $98.88 | -$1.12 | -1.1 % | 6.2 % | 0 |
+| DOGE-USDT-SWAP | 399 | 49 | $98.10 | -$1.90 | -1.9 % | 11.5 % | 0 |
+| NEAR-USDT-SWAP | 399 | 37 | $97.06 | -$2.94 | -2.9 % | 6.0 % | 0 |
+| SNDK-USDT-SWAP | 195 | 116 | $96.58 | -$3.42 | -3.4 % | 15.1 % | 0 |
+| ENA-USDT-SWAP | 363 | 42 | $95.41 | -$4.59 | -4.6 % | 11.0 % | 0 |
+| XAU-USDT-SWAP | 399 | 87 | $94.43 | -$5.57 | -5.6 % | 14.5 % | 2 |
+| WLD-USDT-SWAP | 399 | 39 | $94.41 | -$5.59 | -5.6 % | 12.2 % | 0 |
+| CL-USDT-SWAP | 195 | 42 | $93.02 | -$6.98 | -7.0 % | 11.8 % | 0 |
+| SPCX-USDT-SWAP | 131 | 55 | $91.94 | -$8.06 | -8.1 % | 13.1 % | 0 |
+| RAY-USDT-SWAP | 399 | 73 | $91.18 | -$8.82 | -8.8 % | 18.2 % | 0 |
+| BNB-USDT-SWAP | 399 | 76 | $88.68 | -$11.32 | -11.3 % | 16.7 % | 0 |
+
+**14 of 27 positive. $2,700 spread over all of them becomes $2,738.67 — up
+1.4% in a bit over a year, on a median outcome of +$1.79.** The best result is
++$21 and the worst is -$11, which is the honest scale of this: a small edge,
+not a return stream.
+
+Two things that table is not. It is **not a portfolio** — 27 separate $100
+accounts do not have one account's margin, correlation or exposure, and a
+single account trading all 27 is a different (worse-behaved) experiment. And
+it is **not a menu**: the instruments that won here cannot be identified in
+advance, since first-half performance does not rank second-half performance
+(+0.009).
+
+The one thing it settles cleanly is feasibility. With $100 risking 1% a trade,
+OKX's minimum order size costs **3 skipped signals out of ~1,450** across the
+whole universe, so the percentage results on a $100 account are the results a
+large account would get. Contract minimums are not what stands between this
+strategy and money; the edge's size is.
+
+On the longest history available, the three majors over the full 2.2 years,
+$100 each:
+
+| instrument | trades | final | profit | return | CAGR | max DD |
+|---|---|---|---|---|---|---|
+| ETH-USDT-SWAP | 133 | $128.21 | +$28.21 | +28.2 % | +8.1 % | 9.9 % |
+| BTC-USDT-SWAP | 145 | $114.21 | +$14.21 | +14.2 % | +4.3 % | 9.6 % |
+| SOL-USDT-SWAP | 83 | $103.07 | +$3.07 | +3.1 % | +1.0 % | 7.7 % |
+
+$300 becomes $345.48 over 2.2 years (+15.2%), with the caveat that already
+applies to every table above: the two most recent quarters of that sample are
+negative.
+
 ### A different asset class: US equities
 
 Every instrument above is an OKX perpetual. US cash equities are a different
