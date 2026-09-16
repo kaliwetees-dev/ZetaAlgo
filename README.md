@@ -1483,6 +1483,56 @@ information, not noise. That is an observation from the same sample, not a
 tested rule — a time-of-day filter would need its own out-of-sample test
 before it is worth anything.
 
+### Other timeframes: 15m is not the best choice
+
+Everything above runs on 15-minute bars because that is where the earlier
+strategies in this repo ended up. That is a habit, not a result, so the same
+rules were run on 15m, 30m, 1h, 2h and 4h bars (resampled from the same
+76,799 15m bars, so it is one sample seen at five resolutions), holding the
+*wall-clock* settings constant: the baseline is one day of bars at every
+resolution, and the time stop is twelve hours.
+
+| spike >= | bar | trades | win % | PF | gross R | fee in R | net R | t | median stop |
+|---|---|---|---|---|---|---|---|---|---|
+| 5x | 15m | 1,897 | 28.9 | 0.93 | +0.064 | 0.103 | -0.039 | -1.30 | 115 bps |
+| 5x | 30m | 932 | 35.4 | 0.92 | +0.040 | 0.070 | -0.029 | -0.75 | 169 bps |
+| 5x | 1h | 433 | 40.6 | 0.94 | +0.029 | 0.050 | -0.021 | -0.45 | 231 bps |
+| 5x | 2h | 158 | 46.8 | 1.22 | +0.107 | 0.036 | **+0.072** | +0.95 | 356 bps |
+| 5x | 4h | 51 | 56.9 | 3.01 | +0.319 | 0.023 | **+0.296** | +2.67 | 564 bps |
+| 8x | 15m | 872 | 32.8 | 0.97 | +0.079 | 0.086 | -0.006 | -0.15 | 135 bps |
+| 8x | 30m | 354 | 41.5 | 1.04 | +0.081 | 0.058 | **+0.023** | +0.39 | 210 bps |
+| 8x | 1h | 117 | 48.7 | 1.56 | +0.204 | 0.041 | **+0.164** | +1.66 | 313 bps |
+| 8x | 2h | 34 | 58.8 | 3.97 | +0.369 | 0.022 | **+0.348** | +2.60 | 569 bps |
+| 12x | 15m | 361 | 42.4 | 1.28 | +0.200 | 0.071 | **+0.129** | +1.95 | 167 bps |
+| 12x | 30m | 108 | 50.9 | 1.82 | +0.324 | 0.049 | **+0.275** | +2.42 | 258 bps |
+| 12x | 1h | 26 | 73.1 | 22.85 | +0.954 | 0.030 | **+0.924** | +4.14 | 386 bps |
+
+Two things move together as the bar grows, and the fee equation explains both:
+a spike bar covers more ground, so the **stop widens** (115 bps to 564), and
+the same 10 bps round trip therefore **costs a quarter as much in R** (0.103
+down to 0.023). The win rate rises with it. On this sample **30m and 1h
+dominate the 15m configuration the rest of this section uses** — 1h at 8x is
++0.164R over 117 trades against 15m at 8x being flat.
+
+It is not an artifact of where the bars are cut. Re-cutting the hourly bars at
+all four 15-minute offsets gives +0.113 to +0.168R (t = +1.3 to +1.9), and both
+halves of the sample are positive at 1h/8x (+0.071 and +0.217) and at 30m/12x
+(+0.423 and +0.201).
+
+**What the top-right of that table is not is a discovery.** Trade count falls
+roughly in proportion to the bar size, so 1h at 12x is 26 trades in 2.2 years
+and 2h at 8x is 34 — at which point PF 22.85 means "three trades went well",
+not an edge. The 4h/5x cell makes the point exactly: cut those bars at each of
+the 16 possible 15-minute offsets and net R ranges from **-0.114 to +0.451**,
+median +0.171 (median t = +1.48). The +0.296 in the table is the phase that
+happened to start at midnight, and the honest version of that row is "median
++0.17, and one phase in sixteen loses money".
+
+So: **the effect survives and strengthens as the timeframe rises, up to the
+point where there is nothing left to measure.** 30m-1h is where it is both
+strongest and still countable, and that is the region worth testing next, on
+data these tables have not already seen.
+
 ### The part that should stop you trading it
 
 Quarter by quarter, the 12x configuration on BTC+ETH+SOL:
