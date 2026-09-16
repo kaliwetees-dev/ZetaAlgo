@@ -1533,6 +1533,54 @@ point where there is nothing left to measure.** 30m-1h is where it is both
 strongest and still countable, and that is the region worth testing next, on
 data these tables have not already seen.
 
+### Return per unit of time, and why the fastest-looking numbers are fake
+
+The table above makes a high threshold on a high timeframe look best — 1h at
+12x earns +0.92R per trade. But return is net R multiplied by **how often the
+setup appears**, and frequency falls faster than the edge rises. Annualising
+each cell (BTC/ETH/SOL, 2.19 years, 1% of equity risked per trade):
+
+| bar | spike >= | trades | per instrument per year | net R | annual return, one instrument | all three |
+|---|---|---|---|---|---|---|
+| 15m | 5x | 1,897 | 289 | -0.039 | -11.4 % | -34.2 % |
+| 15m | 8x | 872 | 133 | -0.006 | -0.9 % | -2.6 % |
+| **15m** | **12x** | **361** | **55** | +0.129 | **+7.1 %** | **+21.2 %** |
+| 30m | 8x | 354 | 54 | +0.023 | +1.3 % | +3.8 % |
+| 30m | 12x | 108 | 16 | +0.275 | +4.5 % | +13.6 % |
+| 1h | 8x | 117 | 18 | +0.164 | +2.9 % | +8.7 % |
+| 1h | 12x | 26 | 4 | +0.924 | +3.7 % | +11.0 % |
+| 2h | 8x | 34 | 5 | +0.348 | +1.8 % | +5.4 % |
+| 2h | 12x | 7 | 1 | +0.300 | +0.3 % | +1.0 % |
+
+The strongest per-trade cell in the repo, 1h/12x, is worth **four trades a
+year per instrument**. 15m/12x has a per-trade edge seven times smaller and
+earns roughly twice as much per year, because it fires fourteen times as
+often. "All three" assumes one account running the three majors at 1% risk
+each and ignores the overlap between them, so treat it as an upper bound.
+
+The same arithmetic disposes of the fastest-looking instruments. Ranking the
+$100 accounts by annualised return puts SOXL first at **+49.3% (from +21.2%
+in 119 days)** and SKHY second at +16.6% (67 days) — and both of those are
+instruments whose history is a few months long. Split the universe by how much
+history it has:
+
+| history | instruments | CAGR range | median |
+|---|---|---|---|
+| under 200 days | 5 | **-14.7 % to +49.3 %** | -4.4 % |
+| 265 days or more | 22 | -7.3 % to +10.9 % | +1.1 % |
+
+A short window does not make an instrument better, it makes its annualised
+number louder in both directions — the same five short-history instruments
+hold the best result *and* the worst. On the instruments with enough history
+to say anything, the whole distribution fits between -7% and +11% a year, with
+a median of +1.1%.
+
+So the honest answer to "what returns a lot, quickly" is **nothing here**.
+The best-supported configuration earns single digits a year per instrument,
+about 20% if you run several at once, with a ~10% drawdown and two negative
+quarters at the end of the sample. Anything in this data that looks faster
+than that is either a four-month window or four trades a year.
+
 ### The part that should stop you trading it
 
 Quarter by quarter, the 12x configuration on BTC+ETH+SOL:
